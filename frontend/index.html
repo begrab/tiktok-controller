@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TikTok Accessibility Controller</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>TikTok Controller</h1>
+            <div class="status-bar">
+                <span id="connection-status" class="status disconnected">Disconnected</span>
+                <button id="settings-btn" class="icon-btn" title="Settings">&#9881;</button>
+            </div>
+        </header>
+
+        <main>
+            <!-- Device Selection -->
+            <section class="device-panel">
+                <div class="panel-header">
+                    <h2>Devices</h2>
+                    <button id="refresh-devices" class="btn-small">Refresh</button>
+                </div>
+                <div id="device-list" class="device-list">
+                    <p class="placeholder">Loading devices...</p>
+                </div>
+            </section>
+
+            <!-- Main Control Area -->
+            <section class="control-panel">
+                <!-- Device Preview -->
+                <div class="preview-container">
+                    <div id="device-preview" class="device-preview">
+                        <p class="placeholder">Select a device to view</p>
+                    </div>
+                    <div class="preview-controls">
+                        <button id="toggle-stream" class="btn-small" disabled>Start Stream</button>
+                        <button id="take-screenshot" class="btn-small" disabled>Screenshot</button>
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="actions-container">
+                    <h3>Quick Actions</h3>
+                    <div class="action-grid">
+                        <button id="action-swipe-up" class="action-btn" disabled>
+                            <span class="action-icon">&#8593;</span>
+                            <span>Next Video</span>
+                        </button>
+                        <button id="action-swipe-down" class="action-btn" disabled>
+                            <span class="action-icon">&#8595;</span>
+                            <span>Previous</span>
+                        </button>
+                        <button id="action-like" class="action-btn" disabled>
+                            <span class="action-icon">&#9829;</span>
+                            <span>Like</span>
+                        </button>
+                        <button id="action-save" class="action-btn" disabled>
+                            <span class="action-icon">&#9734;</span>
+                            <span>Save</span>
+                        </button>
+                        <button id="action-follow" class="action-btn" disabled>
+                            <span class="action-icon">&#43;</span>
+                            <span>Follow</span>
+                        </button>
+                        <button id="action-comment" class="action-btn" disabled>
+                            <span class="action-icon">&#128172;</span>
+                            <span>Comment</span>
+                        </button>
+                    </div>
+
+                    <!-- Batch Actions -->
+                    <div class="batch-actions" id="batch-actions" style="display: none;">
+                        <h4>Batch Actions (All Selected)</h4>
+                        <div class="batch-buttons">
+                            <button id="batch-swipe" class="btn-small">Swipe All</button>
+                            <button id="batch-like" class="btn-small">Like All</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Comment Section -->
+            <section class="comment-panel">
+                <h3>AI Comments</h3>
+                <div class="comment-controls">
+                    <select id="comment-style">
+                        <option value="friendly">Friendly</option>
+                        <option value="funny">Funny</option>
+                        <option value="supportive">Supportive</option>
+                        <option value="curious">Curious</option>
+                        <option value="impressed">Impressed</option>
+                        <option value="relatable">Relatable</option>
+                    </select>
+                    <button id="generate-comments" class="btn" disabled>Generate Comments</button>
+                </div>
+                <div id="comment-suggestions" class="comment-suggestions">
+                    <p class="placeholder">Click "Generate Comments" to get AI suggestions</p>
+                </div>
+                <div class="custom-comment">
+                    <textarea id="custom-comment" placeholder="Or type your own comment..."></textarea>
+                    <button id="post-comment" class="btn" disabled>Post Comment</button>
+                </div>
+            </section>
+
+            <!-- Video Analysis -->
+            <section class="analysis-panel">
+                <h3>Video Analysis</h3>
+                <button id="analyze-video" class="btn" disabled>Analyze Current Video</button>
+                <div id="analysis-result" class="analysis-result">
+                    <p class="placeholder">Analysis results will appear here</p>
+                </div>
+            </section>
+        </main>
+
+        <!-- Settings Modal -->
+        <div id="settings-modal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Settings</h2>
+                    <button class="close-btn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="setting-group">
+                        <h4>iMouse/PhoneFarm Connection</h4>
+                        <label>
+                            Host:
+                            <input type="text" id="setting-host" placeholder="127.0.0.1">
+                        </label>
+                        <label>
+                            HTTP Port:
+                            <input type="number" id="setting-port" placeholder="9912">
+                        </label>
+                    </div>
+                    <div class="setting-group">
+                        <h4>OpenAI Configuration</h4>
+                        <label>
+                            API Key:
+                            <input type="password" id="setting-openai-key" placeholder="sk-...">
+                        </label>
+                        <label>
+                            Model:
+                            <select id="setting-openai-model">
+                                <option value="gpt-4o">GPT-4o</option>
+                                <option value="gpt-4o-mini">GPT-4o Mini</option>
+                                <option value="gpt-4-turbo">GPT-4 Turbo</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div class="setting-group">
+                        <h4>UI Calibration</h4>
+                        <p class="hint">Click on the preview to calibrate button positions</p>
+                        <select id="calibration-element">
+                            <option value="">Select element to calibrate...</option>
+                            <option value="like_button">Like Button</option>
+                            <option value="comment_button">Comment Button</option>
+                            <option value="share_button">Share Button</option>
+                            <option value="save_button">Save Button</option>
+                            <option value="follow_button">Follow Button</option>
+                            <option value="video_center">Video Center</option>
+                            <option value="comment_input">Comment Input</option>
+                            <option value="post_button">Post Button</option>
+                        </select>
+                    </div>
+                    <button id="save-settings" class="btn">Save Settings</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast Notifications -->
+        <div id="toast-container"></div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

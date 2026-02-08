@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TikTok Controller</title>
+    <style>
+        :root {
+            --bg-primary: #0a0a0a;
+            --bg-secondary: #1a1a1a;
+            --bg-tertiary: #2a2a2a;
+            --text-primary: #ffffff;
+            --text-secondary: #a0a0a0;
+            --accent: #fe2c55;
+            --accent-hover: #ff4466;
+            --success: #25f4ee;
+            --warning: #ffcc00;
+            --error: #ff3333;
+            --border: #333;
+            --radius: 8px;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container { max-width: 1400px; margin: 0 auto; }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 0;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 20px;
+        }
+
+        header h1 { font-size: 1.5rem; }
+
+        .status-bar { display: flex; align-items: center; gap: 15px; }
+
+        .status {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+
+        .status.connected { background: rgba(37, 244, 238, 0.2); color: var(--success); }
+        .status.disconnected { background: rgba(255, 51, 51, 0.2); color: var(--error); }
+
+        /* Setup Panel */
+        .setup-panel {
+            background: var(--bg-secondary);
+            border-radius: var(--radius);
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid var(--border);
+        }
+
+        .setup-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .input-group { display: flex; flex-direction: column; gap: 5px; }
+        .input-group label { font-size: 0.85rem; color: var(--text-secondary); }
+
+        input, select, textarea {
+            padding: 10px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text-primary);
+            font-size: 0.9rem;
+        }
+
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 10px 20px;
+            background: var(--accent);
+            border: none;
+            border-radius: var(--radius);
+            color: white;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn:hover:not(:disabled) { background: var(--accent-hover); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        /* Main Layout */
+        main {
+            display: grid;
+            grid-template-columns: 250px 1fr 320px;
+            gap: 20px;
+        }
+
+        section {
+            background: var(--bg-secondary);
+            border-radius: var(--radius);
+            padding: 20px;
+            border: 1px solid var(--border);
+        }
+
+        h2 { font-size: 1.1rem; margin-bottom: 15px; }
+        h3 { font-size: 1rem; margin-bottom: 15px; }
+
+        /* Device List */
+        .device-panel { grid-row: span 2; }
+
+        .device-list { display: flex; flex-direction: column; gap: 8px; }
+
+        .device-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px;
+            background: var(--bg-tertiary);
+            border-radius: var(--radius);
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .device-item:hover { border-color: var(--accent); }
+        .device-item.selected { border-color: var(--accent); background: rgba(254, 44, 85, 0.1); }
+
+        .device-status {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--error);
+        }
+
+        .device-status.online { background: var(--success); }
+
+        .device-info { flex: 1; overflow: hidden; }
+        .device-name { font-weight: 500; font-size: 0.9rem; }
+        .device-model { font-size: 0.75rem; color: var(--text-secondary); }
+
+        /* Control Panel */
+        .control-panel { display: flex; flex-direction: column; gap: 20px; }
+
+        .preview-section { display: flex; gap: 20px; }
+
+        .device-preview {
+            width: 280px;
+            aspect-ratio: 9/16;
+            background: var(--bg-tertiary);
+            border-radius: var(--radius);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+
+        .device-preview img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .actions-section { flex: 1; }
+
+        .action-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+        }
+
+        .action-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 20px 15px;
+            background: var(--bg-tertiary);
+            border: 2px solid transparent;
+            border-radius: var(--radius);
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .action-btn:hover:not(:disabled) {
+            border-color: var(--accent);
+            background: rgba(254, 44, 85, 0.1);
+        }
+
+        .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .action-btn:active:not(:disabled) { transform: scale(0.95); }
+
+        .action-icon { font-size: 1.8rem; }
+        .action-btn span:last-child { font-size: 0.85rem; }
+
+        /* Comment Panel */
+        .comment-panel { grid-row: span 2; }
+
+        .comment-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .comment-controls select { flex: 1; }
+
+        .comment-suggestions {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 15px;
+            max-height: 250px;
+            overflow-y: auto;
+        }
+
+        .comment-suggestion {
+            padding: 12px;
+            background: var(--bg-tertiary);
+            border-radius: var(--radius);
+            cursor: pointer;
+            font-size: 0.9rem;
+            border: 2px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .comment-suggestion:hover { border-color: var(--accent); }
+        .comment-suggestion.selected { border-color: var(--accent); background: rgba(254, 44, 85, 0.1); }
+
+        .custom-comment { display: flex; flex-direction: column; gap: 10px; }
+
+        .custom-comment textarea {
+            width: 100%;
+            height: 80px;
+            resize: vertical;
+            font-family: inherit;
+        }
+
+        /* Analysis */
+        .analysis-result {
+            margin-top: 15px;
+            padding: 15px;
+            background: var(--bg-tertiary);
+            border-radius: var(--radius);
+            font-size: 0.9rem;
+            line-height: 1.6;
+        }
+
+        .hashtag {
+            display: inline-block;
+            background: rgba(37, 244, 238, 0.2);
+            color: var(--success);
+            padding: 2px 8px;
+            border-radius: 12px;
+            margin: 2px;
+            font-size: 0.8rem;
+        }
+
+        /* Toast */
+        #toast-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 2000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .toast {
+            padding: 12px 20px;
+            background: var(--bg-secondary);
+            border-radius: var(--radius);
+            border-left: 4px solid var(--accent);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            animation: slideIn 0.3s ease;
+        }
+
+        .toast.success { border-left-color: var(--success); }
+        .toast.error { border-left-color: var(--error); }
+
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        .placeholder {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .loading::after {
+            content: '';
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--text-secondary);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .keyboard-hints {
+            margin-top: 15px;
+            padding: 10px;
+            background: var(--bg-tertiary);
+            border-radius: var(--radius);
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .keyboard-hints kbd {
+            background: var(--bg-primary);
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin: 0 2px;
+        }
+
+        /* Responsive */
+        @media (max-width: 1100px) {
+            main {
+                grid-template-columns: 1fr;
+            }
+            .device-panel { grid-row: auto; }
+            .device-list { flex-direction: row; flex-wrap: wrap; }
+            .device-item { flex: 1 1 150px; }
+            .preview-section { flex-direction: column; align-items: center; }
+            .comment-panel { grid-row: auto; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>TikTok Controller</h1>
+            <div class="status-bar">
+                <span id="connection-status" class="status disconnected">Not Connected</span>
+            </div>
+        </header>
+
+        <!-- Setup Panel -->
+        <div class="setup-panel">
+            <div class="setup-grid">
+                <div class="input-group">
+                    <label>iMouse Server Address</label>
+                    <input type="text" id="imouse-host" placeholder="127.0.0.1" value="127.0.0.1">
+                </div>
+                <div class="input-group">
+                    <label>HTTP Port</label>
+                    <input type="number" id="imouse-port" placeholder="9912" value="9912">
+                </div>
+                <div class="input-group">
+                    <label>OpenAI API Key (for AI comments)</label>
+                    <input type="password" id="openai-key" placeholder="sk-...">
+                </div>
+                <div class="input-group">
+                    <label>OpenAI Model</label>
+                    <select id="openai-model">
+                        <option value="gpt-4o">GPT-4o</option>
+                        <option value="gpt-4o-mini">GPT-4o Mini</option>
+                    </select>
+                </div>
+            </div>
+            <button class="btn" id="connect-btn">Connect to iMouse</button>
+        </div>
+
+        <main>
+            <!-- Device Panel -->
+            <section class="device-panel">
+                <h2>Devices</h2>
+                <div id="device-list" class="device-list">
+                    <p class="placeholder">Connect to iMouse to see devices</p>
+                </div>
+            </section>
+
+            <!-- Control Panel -->
+            <section class="control-panel">
+                <div class="preview-section">
+                    <div id="device-preview" class="device-preview">
+                        <p class="placeholder">Select a device</p>
+                    </div>
+                    <div class="actions-section">
+                        <h3>Actions</h3>
+                        <div class="action-grid">
+                            <button class="action-btn" data-action="swipe-up" disabled>
+                                <span class="action-icon">&#8593;</span>
+                                <span>Next</span>
+                            </button>
+                            <button class="action-btn" data-action="swipe-down" disabled>
+                                <span class="action-icon">&#8595;</span>
+                                <span>Previous</span>
+                            </button>
+                            <button class="action-btn" data-action="like" disabled>
+                                <span class="action-icon">&#9829;</span>
+                                <span>Like</span>
+                            </button>
+                            <button class="action-btn" data-action="save" disabled>
+                                <span class="action-icon">&#9733;</span>
+                                <span>Save</span>
+                            </button>
+                            <button class="action-btn" data-action="follow" disabled>
+                                <span class="action-icon">&#43;</span>
+                                <span>Follow</span>
+                            </button>
+                            <button class="action-btn" data-action="refresh" disabled>
+                                <span class="action-icon">&#8635;</span>
+                                <span>Refresh</span>
+                            </button>
+                        </div>
+                        <div class="keyboard-hints">
+                            <strong>Keyboard:</strong>
+                            <kbd>&#8593;</kbd>/<kbd>&#8595;</kbd> Swipe &nbsp;
+                            <kbd>L</kbd> Like &nbsp;
+                            <kbd>S</kbd> Save &nbsp;
+                            <kbd>F</kbd> Follow
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Analysis -->
+                <div>
+                    <h3>Video Analysis</h3>
+                    <button class="btn btn-secondary" id="analyze-btn" disabled>Analyze Current Video</button>
+                    <div id="analysis-result" class="analysis-result" style="display:none;"></div>
+                </div>
+            </section>
+
+            <!-- Comment Panel -->
+            <section class="comment-panel">
+                <h2>AI Comments</h2>
+                <div class="comment-controls">
+                    <select id="comment-style">
+                        <option value="friendly">Friendly</option>
+                        <option value="funny">Funny</option>
+                        <option value="supportive">Supportive</option>
+                        <option value="curious">Curious</option>
+                        <option value="impressed">Impressed</option>
+                    </select>
+                    <button class="btn btn-secondary" id="generate-btn" disabled>Generate</button>
+                </div>
+                <div id="comment-suggestions" class="comment-suggestions">
+                    <p class="placeholder">Generate AI comment suggestions</p>
+                </div>
+                <div class="custom-comment">
+                    <textarea id="custom-comment" placeholder="Or type your own comment..."></textarea>
+                    <button class="btn" id="post-comment-btn" disabled>Post Comment</button>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <div id="toast-container"></div>
+
+    <script>
+    class TikTokController {
+        constructor() {
+            this.imouseHost = '';
+            this.imousePort = 9912;
+            this.openaiKey = '';
+            this.openaiModel = 'gpt-4o';
+            this.devices = [];
+            this.selectedDevice = null;
+            this.connected = false;
+
+            // TikTok UI positions (percentage of screen)
+            this.ui = {
+                like_button: { x: 0.92, y: 0.45 },
+                comment_button: { x: 0.92, y: 0.55 },
+                share_button: { x: 0.92, y: 0.65 },
+                save_button: { x: 0.5, y: 0.85 },
+                follow_button: { x: 0.92, y: 0.35 },
+                video_center: { x: 0.5, y: 0.5 },
+                comment_input: { x: 0.5, y: 0.95 },
+            };
+
+            this.init();
+        }
+
+        init() {
+            this.loadSettings();
+            this.bindEvents();
+        }
+
+        loadSettings() {
+            const saved = localStorage.getItem('tiktok-controller-settings');
+            if (saved) {
+                const settings = JSON.parse(saved);
+                document.getElementById('imouse-host').value = settings.host || '127.0.0.1';
+                document.getElementById('imouse-port').value = settings.port || 9912;
+                document.getElementById('openai-key').value = settings.openaiKey || '';
+                document.getElementById('openai-model').value = settings.openaiModel || 'gpt-4o';
+            }
+        }
+
+        saveSettings() {
+            localStorage.setItem('tiktok-controller-settings', JSON.stringify({
+                host: this.imouseHost,
+                port: this.imousePort,
+                openaiKey: this.openaiKey,
+                openaiModel: this.openaiModel
+            }));
+        }
+
+        get apiBase() {
+            return `http://${this.imouseHost}:${this.imousePort}/api`;
+        }
+
+        // iMouse API
+        async imouseRequest(fun, data = {}) {
+            const response = await fetch(this.apiBase, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ fun, msgid: 0, data })
+            });
+            const result = await response.json();
+            if (result.status !== 0) {
+                throw new Error(result.message || 'API error');
+            }
+            return result.data;
+        }
+
+        async connect() {
+            this.imouseHost = document.getElementById('imouse-host').value;
+            this.imousePort = parseInt(document.getElementById('imouse-port').value);
+            this.openaiKey = document.getElementById('openai-key').value;
+            this.openaiModel = document.getElementById('openai-model').value;
+
+            try {
+                await this.loadDevices();
+                this.connected = true;
+                this.updateConnectionStatus(true);
+                this.saveSettings();
+                this.showToast('Connected to iMouse', 'success');
+            } catch (error) {
+                this.showToast(`Connection failed: ${error.message}`, 'error');
+                this.updateConnectionStatus(false);
+            }
+        }
+
+        async loadDevices() {
+            const data = await this.imouseRequest('get_device_list');
+            this.devices = Object.entries(data || {}).map(([id, info]) => ({
+                device_id: id,
+                name: info.name || id.slice(0, 8),
+                model: info.model || 'Unknown',
+                width: info.width || 0,
+                height: info.height || 0,
+                is_online: info.state === 1,
+                ip: info.ip || ''
+            }));
+            this.renderDevices();
+        }
+
+        renderDevices() {
+            const container = document.getElementById('device-list');
+            if (this.devices.length === 0) {
+                container.innerHTML = '<p class="placeholder">No devices found</p>';
+                return;
+            }
+
+            container.innerHTML = this.devices.map(d => `
+                <div class="device-item ${d.device_id === this.selectedDevice?.device_id ? 'selected' : ''}"
+                     data-id="${d.device_id}">
+                    <div class="device-status ${d.is_online ? 'online' : ''}"></div>
+                    <div class="device-info">
+                        <div class="device-name">${d.name}</div>
+                        <div class="device-model">${d.model} (${d.width}x${d.height})</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        selectDevice(deviceId) {
+            this.selectedDevice = this.devices.find(d => d.device_id === deviceId);
+            this.renderDevices();
+            this.updateActionButtons();
+            this.getScreenshot();
+        }
+
+        async getScreenshot() {
+            if (!this.selectedDevice) return;
+
+            const preview = document.getElementById('device-preview');
+            preview.innerHTML = '<p class="placeholder loading">Loading</p>';
+
+            try {
+                const data = await this.imouseRequest('get_device_screenshot', {
+                    deviceid: this.selectedDevice.device_id,
+                    isjpg: true,
+                    binary: false
+                });
+                if (data?.img) {
+                    preview.innerHTML = `<img src="data:image/jpeg;base64,${data.img}">`;
+                }
+            } catch (error) {
+                preview.innerHTML = '<p class="placeholder">Screenshot failed</p>';
+            }
+        }
+
+        getCoords(element) {
+            const ui = this.ui[element] || { x: 0.5, y: 0.5 };
+            return {
+                x: Math.round(this.selectedDevice.width * ui.x),
+                y: Math.round(this.selectedDevice.height * ui.y)
+            };
+        }
+
+        async click(x, y, duration = 50) {
+            await this.imouseRequest('click', {
+                deviceid: this.selectedDevice.device_id,
+                x, y,
+                button: 'left',
+                time: duration
+            });
+        }
+
+        async swipe(direction, length = 0.5) {
+            await this.imouseRequest('swipe', {
+                deviceid: this.selectedDevice.device_id,
+                direction,
+                length,
+                button: 'left'
+            });
+        }
+
+        async sendKey(key) {
+            await this.imouseRequest('send_key', {
+                deviceid: this.selectedDevice.device_id,
+                key
+            });
+        }
+
+        // Actions
+        async doAction(action) {
+            if (!this.selectedDevice) return;
+
+            try {
+                switch (action) {
+                    case 'swipe-up':
+                        await this.swipe('up');
+                        break;
+                    case 'swipe-down':
+                        await this.swipe('down');
+                        break;
+                    case 'like':
+                        const center = this.getCoords('video_center');
+                        await this.click(center.x, center.y);
+                        await this.sleep(100);
+                        await this.click(center.x, center.y);
+                        break;
+                    case 'save':
+                        const share = this.getCoords('share_button');
+                        await this.click(share.x, share.y);
+                        await this.sleep(500);
+                        const save = this.getCoords('save_button');
+                        await this.click(save.x, save.y);
+                        await this.sleep(300);
+                        await this.click(this.selectedDevice.width / 2, 50);
+                        break;
+                    case 'follow':
+                        const follow = this.getCoords('follow_button');
+                        await this.click(follow.x, follow.y);
+                        break;
+                    case 'refresh':
+                        break;
+                }
+
+                this.showToast(`${action} done`, 'success');
+                await this.sleep(300);
+                await this.getScreenshot();
+            } catch (error) {
+                this.showToast(`Action failed: ${error.message}`, 'error');
+            }
+        }
+
+        // AI Features
+        async analyzeVideo() {
+            if (!this.selectedDevice || !this.openaiKey) {
+                this.showToast('Need device and OpenAI key', 'error');
+                return;
+            }
+
+            const resultDiv = document.getElementById('analysis-result');
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = '<span class="loading">Analyzing</span>';
+
+            try {
+                // Get screenshot
+                const data = await this.imouseRequest('get_device_screenshot', {
+                    deviceid: this.selectedDevice.device_id,
+                    isjpg: true,
+                    binary: false
+                });
+
+                // Call OpenAI
+                const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${this.openaiKey}`
+                    },
+                    body: JSON.stringify({
+                        model: this.openaiModel,
+                        messages: [{
+                            role: 'user',
+                            content: [
+                                {
+                                    type: 'image_url',
+                                    image_url: { url: `data:image/jpeg;base64,${data.img}` }
+                                },
+                                {
+                                    type: 'text',
+                                    text: 'Analyze this TikTok screenshot. Extract: 1) Caption/description 2) Hashtags 3) Creator username 4) What the video is about. Return as JSON with keys: caption, hashtags (array), username, description'
+                                }
+                            ]
+                        }],
+                        max_tokens: 500
+                    })
+                });
+
+                const result = await response.json();
+                const content = result.choices[0].message.content;
+
+                // Try to parse JSON from response
+                let analysis;
+                try {
+                    const jsonMatch = content.match(/\{[\s\S]*\}/);
+                    analysis = jsonMatch ? JSON.parse(jsonMatch[0]) : { description: content };
+                } catch {
+                    analysis = { description: content };
+                }
+
+                this.currentAnalysis = analysis;
+
+                let html = '';
+                if (analysis.caption) html += `<p><strong>Caption:</strong> ${analysis.caption}</p>`;
+                if (analysis.username) html += `<p><strong>Creator:</strong> ${analysis.username}</p>`;
+                if (analysis.hashtags?.length) {
+                    html += `<p><strong>Hashtags:</strong> ${analysis.hashtags.map(h =>
+                        `<span class="hashtag">${h}</span>`).join(' ')}</p>`;
+                }
+                if (analysis.description) html += `<p><strong>Content:</strong> ${analysis.description}</p>`;
+
+                resultDiv.innerHTML = html || 'No content detected';
+            } catch (error) {
+                resultDiv.innerHTML = `Error: ${error.message}`;
+            }
+        }
+
+        async generateComments() {
+            if (!this.openaiKey) {
+                this.showToast('OpenAI API key required', 'error');
+                return;
+            }
+
+            const container = document.getElementById('comment-suggestions');
+            container.innerHTML = '<p class="placeholder loading">Generating</p>';
+
+            try {
+                // First analyze if we haven't
+                if (!this.currentAnalysis) {
+                    await this.analyzeVideo();
+                }
+
+                const style = document.getElementById('comment-style').value;
+                const context = this.currentAnalysis || {};
+
+                const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${this.openaiKey}`
+                    },
+                    body: JSON.stringify({
+                        model: this.openaiModel,
+                        messages: [{
+                            role: 'system',
+                            content: `Generate 3 ${style} TikTok comments based on video context. Make them authentic, not generic. Include 1-2 emojis. Return as JSON array of strings.`
+                        }, {
+                            role: 'user',
+                            content: `Video context:\nCaption: ${context.caption || 'N/A'}\nHashtags: ${(context.hashtags || []).join(' ')}\nContent: ${context.description || 'N/A'}`
+                        }],
+                        max_tokens: 300,
+                        temperature: 0.8
+                    })
+                });
+
+                const result = await response.json();
+                const content = result.choices[0].message.content;
+
+                let comments;
+                try {
+                    const jsonMatch = content.match(/\[[\s\S]*\]/);
+                    comments = jsonMatch ? JSON.parse(jsonMatch[0]) : [content];
+                } catch {
+                    comments = [content];
+                }
+
+                container.innerHTML = comments.map(c =>
+                    `<div class="comment-suggestion" data-comment="${this.escapeHtml(c)}">${this.escapeHtml(c)}</div>`
+                ).join('');
+
+            } catch (error) {
+                container.innerHTML = `<p class="placeholder">Error: ${error.message}</p>`;
+            }
+        }
+
+        async postComment() {
+            if (!this.selectedDevice) return;
+
+            const customComment = document.getElementById('custom-comment').value;
+            const selected = document.querySelector('.comment-suggestion.selected');
+            const comment = customComment || selected?.dataset.comment;
+
+            if (!comment) {
+                this.showToast('Enter or select a comment', 'error');
+                return;
+            }
+
+            try {
+                // Open comments
+                const commentBtn = this.getCoords('comment_button');
+                await this.click(commentBtn.x, commentBtn.y);
+                await this.sleep(500);
+
+                // Tap input
+                const input = this.getCoords('comment_input');
+                await this.click(input.x, input.y);
+                await this.sleep(300);
+
+                // Type comment
+                await this.sendKey(comment);
+                await this.sleep(200);
+
+                // Post (tap post button area)
+                await this.click(this.selectedDevice.width - 50, input.y);
+
+                this.showToast('Comment posted', 'success');
+                document.getElementById('custom-comment').value = '';
+
+                await this.sleep(500);
+                await this.click(this.selectedDevice.width / 2, 50); // Close
+                await this.getScreenshot();
+            } catch (error) {
+                this.showToast(`Failed: ${error.message}`, 'error');
+            }
+        }
+
+        // Helpers
+        sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        updateConnectionStatus(connected) {
+            const status = document.getElementById('connection-status');
+            status.textContent = connected ? 'Connected' : 'Not Connected';
+            status.className = `status ${connected ? 'connected' : 'disconnected'}`;
+        }
+
+        updateActionButtons() {
+            const hasDevice = !!this.selectedDevice;
+            document.querySelectorAll('.action-btn, #generate-btn, #post-comment-btn, #analyze-btn').forEach(btn => {
+                btn.disabled = !hasDevice;
+            });
+        }
+
+        showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        bindEvents() {
+            // Connect
+            document.getElementById('connect-btn').addEventListener('click', () => this.connect());
+
+            // Device selection
+            document.getElementById('device-list').addEventListener('click', (e) => {
+                const item = e.target.closest('.device-item');
+                if (item) this.selectDevice(item.dataset.id);
+            });
+
+            // Actions
+            document.querySelectorAll('.action-btn').forEach(btn => {
+                btn.addEventListener('click', () => this.doAction(btn.dataset.action));
+            });
+
+            // Analysis
+            document.getElementById('analyze-btn').addEventListener('click', () => this.analyzeVideo());
+
+            // Comments
+            document.getElementById('generate-btn').addEventListener('click', () => this.generateComments());
+            document.getElementById('post-comment-btn').addEventListener('click', () => this.postComment());
+
+            document.getElementById('comment-suggestions').addEventListener('click', (e) => {
+                const suggestion = e.target.closest('.comment-suggestion');
+                if (suggestion) {
+                    document.querySelectorAll('.comment-suggestion').forEach(el => el.classList.remove('selected'));
+                    suggestion.classList.add('selected');
+                    document.getElementById('custom-comment').value = suggestion.dataset.comment;
+                }
+            });
+
+            // Keyboard shortcuts
+            document.addEventListener('keydown', (e) => {
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+                if (!this.selectedDevice) return;
+
+                switch (e.key) {
+                    case 'ArrowUp': e.preventDefault(); this.doAction('swipe-down'); break;
+                    case 'ArrowDown': e.preventDefault(); this.doAction('swipe-up'); break;
+                    case 'l': case 'L': this.doAction('like'); break;
+                    case 's': case 'S': this.doAction('save'); break;
+                    case 'f': case 'F': this.doAction('follow'); break;
+                }
+            });
+        }
+    }
+
+    // Initialize
+    const app = new TikTokController();
+    </script>
+</body>
+</html>
