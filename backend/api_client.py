@@ -1,51 +1,97 @@
-"""PhoneFarm/iMouse API Client."""
-import base64
-import json
-import asyncio
+"""iMouse XP API client.
+
+Thin async wrapper over the iMouse XP console's local HTTP API, matching the
+verified behaviour documented in the technical handover:
+
+  * Base URL is ``http://127.0.0.1:9911/api``. There is no API key; auth is
+    "being on localhost". Port 9912 (seen in some third-party guides) is wrong.
+  * Every request is ``POST {"fun": <endpoint>, "data": {...}}``.
+  * A call succeeded only if HTTP ``status == 200`` AND ``data.code == 0``.
+    An HTTP 200 with a non-zero ``data.code`` is a failure -- check both.
+  * ``/pic/screenshot`` with ``binary: true`` returns raw JPEG bytes, not JSON.
+    Branch on the response content type before parsing.
+
+The WebSocket interface is intentionally not used: the handover measured local
+HTTP calls at ~70 ms and concluded the WebSocket is not worth the added
+complexity.
+"""
+from __future__ import annotations
+
 import logging
-from typing import Optional, Any, Callable
 from dataclasses import dataclass
+from typing import Any, Optional
 
 import httpx
-import websockets
-from websockets.client import WebSocketClientProtocol
 
 from config import Config
 
-# Setup logging
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger("imouse_api")
+logger = logging.getLogger("imouse")
+
+
+# Error codes documented in the handover / API overview.
+ERROR_MESSAGES = {
+    0: "success",
+    28: "plugin not connected (the PaddleOCR console process is not running)",
+}
+
+
+class IMouseError(RuntimeError):
+    """Raised when an iMouse call fails (transport, HTTP, or ``data.code != 0``)."""
+
+    def __init__(self, fun: str, code: int, message: str, status: Optional[int] = None):
+        self.fun = fun
+        self.code = code
+        self.message = message
+        self.status = status
+        hint = ERROR_MESSAGES.get(code)
+        detail = f"{message}" if message else ""
+        if hint and hint not in detail:
+            detail = f"{detail} ({hint})".strip()
+        super().__init__(f"{fun} failed [code={code}]: {detail}")
 
 
 @dataclass
-class ApiResponse:
-    success: bool
-    status: int
-    data: Any
-    message: str
+class ApiResult:
+    """Successful result of an iMouse call.
+
+    ``data`` is the inner ``data`` object from the response (containing ``code``,
+    ``message`` and usually ``list``). ``items`` is a convenience view of
+    ``data['list']`` when present.
+    """
+
+    fun: str
+    data: dict
+
+    @property
+    def items(self) -> list:
+        value = self.data.get("list")
+        return value if isinstance(value, list) else []
+
+    @property
+    def message(self) -> str:
+        return self.data.get("message", "")
 
 
-class PhoneFarmClient:
-    """HTTP client for PhoneFarm/iMouse API."""
+class IMouseClient:
+    """Async HTTP client for the iMouse XP local API."""
 
-    # Ports to try in order (iMouseXP uses 9911, PhoneFarm uses 9912)
-    FALLBACK_PORTS = [9911, 9912]
-
-    def __init__(self, config: Config, device_manager: Any = None):
+    def __init__(self, config: Config):
         self.config = config
         self.base_url = config.http_base_url
         self._client: Optional[httpx.AsyncClient] = None
-        self._working_port: Optional[int] = None  # Cache the working port
-        self._device_manager = device_manager  # For WebSocket fallback
-        logger.info(f"PhoneFarmClient initialized with base_url: {self.base_url}")
+        logger.info("IMouseClient initialised with base_url: %s", self.base_url)
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "IMouseClient":
         self._client = httpx.AsyncClient(timeout=30.0)
         return self
 
-    async def __aexit__(self, *args):
-        if self._client:
+    async def __aexit__(self, *args) -> None:
+        await self.aclose()
+
+    async def aclose(self) -> None:
+        if self._client is not None:
             await self._client.aclose()
+            self._client = None
 
     @property
     def client(self) -> httpx.AsyncClient:
@@ -53,499 +99,224 @@ class PhoneFarmClient:
             self._client = httpx.AsyncClient(timeout=30.0)
         return self._client
 
-    def _get_url_for_port(self, port: int) -> str:
-        """Get API URL for a specific port."""
-        return f"http://{self.config.imouse_host}:{port}/api"
-
-    async def _try_request(self, url: str, payload: dict) -> Optional[ApiResponse]:
-        """Try a single request to a URL. Returns None if connection fails."""
-        try:
-            response = await self.client.post(url, json=payload)
-            logger.debug(f"Response status code: {response.status_code}")
-            logger.debug(f"Response body: {response.text[:500]}")
-
-            result = response.json()
-
-            return ApiResponse(
-                success=result.get("status") == 0,
-                status=result.get("status", -1),
-                data=result.get("data"),
-                message=result.get("message", "")
-            )
-        except (httpx.ConnectError, httpx.TimeoutException):
-            return None  # Connection failed, try next port
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON response from {url}: {e}")
-            return ApiResponse(False, -1, None, f"Invalid JSON: {e}")
-        except Exception as e:
-            logger.error(f"Error in request to {url}: {e}")
-            return ApiResponse(False, -1, None, str(e))
-
-    async def _request(self, fun: str, data: dict = None, msgid: int = 0) -> ApiResponse:
-        """Make an API request to iMouse with automatic port fallback."""
-        payload = {
-            "fun": fun,
-            "msgid": msgid,
-            "data": data or {}
-        }
-
-        logger.debug(f"Payload: {json.dumps(payload, indent=2)}")
-
-        # If we already know the working port, use it
-        if self._working_port:
-            url = self._get_url_for_port(self._working_port)
-            logger.debug(f"API Request to {url} (cached port)")
-            result = await self._try_request(url, payload)
-            if result is not None:
-                if result.success:
-                    logger.info(f"API call '{fun}' succeeded")
-                else:
-                    logger.warning(f"API call '{fun}' failed: status={result.status}, message={result.message}")
-                return result
-            else:
-                # Cached port no longer works, reset and try fallback
-                logger.warning(f"Cached port {self._working_port} no longer responding, trying fallback...")
-                self._working_port = None
-
-        # Try configured port first, then fallbacks
-        ports_to_try = [self.config.imouse_http_port] + [p for p in self.FALLBACK_PORTS if p != self.config.imouse_http_port]
-
-        for port in ports_to_try:
-            url = self._get_url_for_port(port)
-            logger.debug(f"API Request to {url}")
-
-            result = await self._try_request(url, payload)
-
-            if result is not None:
-                # This port works! Cache it
-                if self._working_port != port:
-                    logger.info(f"iMouse API responding on port {port}")
-                    self._working_port = port
-                    self.base_url = url  # Update base URL
-
-                if result.success:
-                    logger.info(f"API call '{fun}' succeeded")
-                else:
-                    logger.warning(f"API call '{fun}' failed: status={result.status}, message={result.message}")
-                return result
-            else:
-                logger.debug(f"Port {port} not responding, trying next...")
-
-        # All ports failed
-        logger.error(f"All connection attempts failed. Tried ports: {ports_to_try}")
-        return ApiResponse(
-            success=False,
-            status=-1,
-            data=None,
-            message=f"Connection failed on all ports ({', '.join(map(str, ports_to_try))})"
-        )
-
-    # Device Management
-    async def get_device_list(self) -> ApiResponse:
-        """Get list of all devices from iMouse."""
-        logger.info("Fetching device list from iMouse...")
-        response = await self._request("get_device_list")
-
-        if response.success:
-            if response.data:
-                device_count = len(response.data) if isinstance(response.data, dict) else 0
-                logger.info(f"Found {device_count} device(s)")
-                for dev_id, dev_info in (response.data.items() if isinstance(response.data, dict) else []):
-                    logger.debug(f"  Device: {dev_id} -> {dev_info}")
-            else:
-                logger.warning("get_device_list succeeded but returned no data")
-        else:
-            logger.error(f"get_device_list failed: {response.message}")
-
+    # ------------------------------------------------------------------ core --
+    async def _post(self, fun: str, data: Optional[dict] = None) -> httpx.Response:
+        payload = {"fun": fun, "data": data or {}}
+        logger.debug("POST %s <- %s", fun, payload)
+        response = await self.client.post(self.base_url, json=payload)
+        response.raise_for_status()
         return response
 
-    async def test_connection(self) -> dict:
-        """Test connection to iMouse and return diagnostic info."""
-        result = {
-            "base_url": self.base_url,
-            "working_port": self._working_port,
-            "reachable": False,
-            "api_works": False,
-            "device_count": 0,
-            "devices": [],
-            "error": None,
-            "raw_response": None
-        }
+    async def call(self, fun: str, **data) -> ApiResult:
+        """Make a JSON API call. Raises :class:`IMouseError` on any failure.
+
+        Do not use this for ``/pic/screenshot`` with ``binary: true`` -- that
+        returns raw bytes; use :meth:`screenshot` instead.
+        """
+        try:
+            response = await self._post(fun, data)
+        except httpx.HTTPError as exc:
+            raise IMouseError(fun, -1, f"transport error: {exc}") from exc
+
+        body = response.json()
+        status = body.get("status")
+        inner = body.get("data") or {}
+        code = inner.get("code")
+
+        if status != 200 or code != 0:
+            raise IMouseError(
+                fun,
+                code if code is not None else -1,
+                inner.get("message", ""),
+                status=status,
+            )
+
+        logger.debug("%s ok", fun)
+        return ApiResult(fun=fun, data=inner)
+
+    # ------------------------------------------------------------- devices ----
+    async def get_devices(self) -> list[dict]:
+        """Return every device the console has ever seen (``/device/get``).
+
+        Filter on ``state == 1`` for devices that are currently online. All tap
+        coordinates live in the ``imgw x imgh`` space reported per device.
+        """
+        result = await self.call("/device/get")
+        return result.items
+
+    # ----------------------------------------------------------- screenshots --
+    async def screenshot(
+        self,
+        device_id: str,
+        *,
+        binary: bool = True,
+        rect: Optional[list[int]] = None,
+        save_path: Optional[str] = None,
+    ) -> bytes:
+        """Capture the mirrored screen as JPEG bytes (``/pic/screenshot``).
+
+        With ``binary=True`` the API returns raw JPEG bytes rather than JSON, so
+        this method branches on the response content type. With ``binary=False``
+        the JPEG comes back base64-encoded inside JSON; we decode it so callers
+        always receive bytes.
+        """
+        data: dict[str, Any] = {"id": device_id, "jpg": True, "binary": binary}
+        if rect:
+            data["rect"] = rect
+        if save_path:
+            data["save_path"] = save_path
 
         try:
-            logger.info(f"Testing connection...")
+            response = await self._post("/pic/screenshot", data)
+        except httpx.HTTPError as exc:
+            raise IMouseError("/pic/screenshot", -1, f"transport error: {exc}") from exc
 
-            # Try the device list call (this will auto-detect working port)
-            response = await self.get_device_list()
+        content_type = response.headers.get("content-type", "")
+        if "application/json" not in content_type:
+            return response.content  # raw JPEG bytes
 
-            # Update result with working port info
-            result["working_port"] = self._working_port
-            result["base_url"] = self.base_url
+        # JSON path: either a base64 image, or an error we must surface.
+        body = response.json()
+        inner = body.get("data") or {}
+        if body.get("status") != 200 or inner.get("code") != 0:
+            raise IMouseError(
+                "/pic/screenshot",
+                inner.get("code", -1),
+                inner.get("message", ""),
+                status=body.get("status"),
+            )
+        import base64
 
-            if response.status != -1:  # Got a response (even if error)
-                result["reachable"] = True
+        b64 = inner.get("img") or inner.get("data") or ""
+        return base64.b64decode(b64) if b64 else b""
 
-            result["raw_response"] = {
-                "success": response.success,
-                "status": response.status,
-                "message": response.message,
-                "data_type": type(response.data).__name__ if response.data else None,
-                "data_preview": str(response.data)[:500] if response.data else None
-            }
-
-            # API works if we got a valid response (even with empty data)
-            if response.success:
-                result["api_works"] = True
-                if response.data:
-                    if isinstance(response.data, dict):
-                        result["device_count"] = len(response.data)
-                        result["devices"] = list(response.data.keys())
-                    elif isinstance(response.data, list):
-                        result["device_count"] = len(response.data)
-                        result["devices"] = response.data
-
-        except Exception as e:
-            result["error"] = str(e)
-            logger.error(f"Connection test failed: {e}")
-
-        return result
-
-    async def set_device(self, device_id: str, **kwargs) -> ApiResponse:
-        """Configure a device."""
-        data = {"deviceid": device_id, **kwargs}
-        return await self._request("set_dev", data)
-
-    async def delete_device(self, device_id: str) -> ApiResponse:
-        """Delete an offline device."""
-        return await self._request("del_dev", {"deviceid": device_id})
-
-    # Groups
-    async def get_group_list(self) -> ApiResponse:
-        """Get list of all groups."""
-        return await self._request("get_group_list")
-
-    async def set_group(self, gid: str = "0", name: str = "") -> ApiResponse:
-        """Create or update a group."""
-        return await self._request("set_group", {"gid": gid, "name": name})
-
-    # Screenshots
-    async def get_screenshot(
-        self,
-        device_id: str,
-        as_jpeg: bool = True,
-        gzip: bool = False
-    ) -> ApiResponse:
-        """Get a screenshot from device."""
-        # Try HTTP first
-        result = await self._request("get_device_screenshot", {
-            "deviceid": device_id,
-            "isjpg": as_jpeg,
-            "gzip": gzip,
-            "binary": False
-        })
-
-        # If HTTP fails with "List index out of bounds", try WebSocket
-        if not result.success and "List index out of bounds" in result.message:
-            if self._device_manager and self._device_manager.is_connected:
-                logger.info("HTTP screenshot failed, trying WebSocket...")
-                ws_result = await self._device_manager.ws_screenshot(device_id)
-                return ApiResponse(
-                    success=ws_result.get("success", False),
-                    status=ws_result.get("status", -1),
-                    data=ws_result.get("data"),
-                    message=ws_result.get("message", "")
-                )
-
-        return result
-
-    # Input Control
-    async def click(
-        self,
-        device_id: str,
-        x: int,
-        y: int,
-        button: str = "left",
-        duration: int = 50
-    ) -> ApiResponse:
-        """Click at coordinates."""
-        # Try HTTP first
-        result = await self._request("click", {
-            "deviceid": device_id,
-            "x": x,
-            "y": y,
-            "button": button,
-            "time": duration
-        })
-
-        # If HTTP fails with "List index out of bounds", try WebSocket
-        if not result.success and "List index out of bounds" in result.message:
-            if self._device_manager and self._device_manager.is_connected:
-                logger.info("HTTP click failed, trying WebSocket...")
-                ws_result = await self._device_manager.ws_click(device_id, x, y, duration)
-                return ApiResponse(
-                    success=ws_result.get("success", False),
-                    status=ws_result.get("status", -1),
-                    data=None,
-                    message=ws_result.get("message", "")
-                )
-
-        return result
+    # -------------------------------------------------------------- input -----
+    async def click(self, device_id: str, x: int, y: int) -> ApiResult:
+        """Tap at ``(x, y)`` in the device's ``imgw x imgh`` coordinate space."""
+        return await self.call("/mouse/click", id=device_id, x=int(x), y=int(y))
 
     async def swipe(
-        self,
-        device_id: str,
-        direction: str = "up",
-        length: float = 0.5,
-        start_x: Optional[int] = None,
-        start_y: Optional[int] = None,
-        end_x: Optional[int] = None,
-        end_y: Optional[int] = None
-    ) -> ApiResponse:
-        """Swipe in a direction or between coordinates."""
-        data = {
-            "deviceid": device_id,
-            "direction": direction,
-            "length": length,
-            "button": "left"
-        }
-        if start_x is not None:
-            data["sx"] = start_x
-        if start_y is not None:
-            data["sy"] = start_y
-        if end_x is not None:
-            data["ex"] = end_x
-        if end_y is not None:
-            data["ey"] = end_y
+        self, device_id: str, direction: str = "up", length: float = 0.5
+    ) -> ApiResult:
+        """Swipe ``up``/``down``/``left``/``right``; ``length`` is a screen fraction."""
+        return await self.call(
+            "/mouse/swipe", id=device_id, direction=direction, len=length
+        )
 
-        # Try HTTP first
-        result = await self._request("swipe", data)
+    async def wheel(
+        self, device_id: str, direction: str = "up", length: float = 0.5, number: int = 1
+    ) -> ApiResult:
+        return await self.call(
+            "/mouse/wheel",
+            id=device_id,
+            direction=direction,
+            len=length,
+            number=number,
+        )
 
-        # If HTTP fails with "List index out of bounds", try WebSocket
-        if not result.success and "List index out of bounds" in result.message:
-            if self._device_manager and self._device_manager.is_connected:
-                logger.info("HTTP swipe failed, trying WebSocket...")
-                ws_result = await self._device_manager.ws_swipe(device_id, direction, length)
-                return ApiResponse(
-                    success=ws_result.get("success", False),
-                    status=ws_result.get("status", -1),
-                    data=None,
-                    message=ws_result.get("message", "")
-                )
-
-        return result
-
-    async def mouse_move(self, device_id: str, x: int, y: int) -> ApiResponse:
-        """Move mouse to coordinates."""
-        return await self._request("mouse_move", {
-            "deviceid": device_id,
-            "x": x,
-            "y": y
-        })
-
-    async def mouse_down(self, device_id: str, button: str = "left") -> ApiResponse:
-        """Press mouse button."""
-        return await self._request("mouse_down", {
-            "deviceid": device_id,
-            "button": button
-        })
-
-    async def mouse_up(self, device_id: str, button: str = "left") -> ApiResponse:
-        """Release mouse button."""
-        return await self._request("mouse_up", {
-            "deviceid": device_id,
-            "button": button
-        })
-
-    async def mouse_reset(self, device_id: str) -> ApiResponse:
-        """Reset mouse position."""
-        return await self._request("mouse_reset_pos", {"deviceid": device_id})
-
-    # Keyboard
+    # ------------------------------------------------------------- keyboard ---
     async def send_key(
         self,
         device_id: str,
         key: Optional[str] = None,
-        fn_key: Optional[str] = None
-    ) -> ApiResponse:
-        """Send keyboard input."""
-        data = {"deviceid": device_id}
-        if key:
+        fn_key: Optional[str] = None,
+    ) -> ApiResult:
+        """Send keyboard input (``/key/sendkey``).
+
+        ``key`` is ASCII only -- accented characters and emoji are dropped. For
+        non-ASCII text use :meth:`clipboard_set` then paste with ``fn_key='WIN+v'``.
+        ``fn_key`` triggers a hotkey (e.g. ``WIN+h`` Home, ``TAB+b`` Back,
+        ``ENTER``, ``BACKSPACE``, ``WIN+v`` Paste).
+        """
+        data: dict[str, Any] = {"id": device_id}
+        if key is not None:
             data["key"] = key
-        if fn_key:
+        if fn_key is not None:
             data["fn_key"] = fn_key
-        return await self._request("send_key", data)
+        return await self.call("/key/sendkey", **data)
 
-    async def send_text(
-        self,
-        device_id: str,
-        text: str,
-        trigger_hotkey: str = "CTRL+ALT+SHIFT+WIN+v"
-    ) -> ApiResponse:
-        """Send text input (for Chinese/unicode text)."""
-        return await self._request("send_text", {
-            "deviceid": device_id,
-            "key": text,
-            "fn_key": trigger_hotkey
-        })
-
-    async def key_down(self, device_id: str, key: str) -> ApiResponse:
-        """Press a key down."""
-        return await self._request("key_down", {"deviceid": device_id, "key": key})
-
-    async def key_up(self, device_id: str, key: str) -> ApiResponse:
-        """Release a key."""
-        return await self._request("key_up", {"deviceid": device_id, "key": key})
-
-    async def release_all_keys(self, device_id: str) -> ApiResponse:
-        """Release all pressed keys."""
-        return await self._request("key_release_all", {"deviceid": device_id})
-
-    # OCR and Image Recognition
+    # -------------------------------------------------------------- vision ----
     async def ocr(
         self,
         device_id: str,
-        rect: Optional[list] = None,
-        enhanced: bool = False
-    ) -> ApiResponse:
-        """Perform OCR on device screen."""
-        data = {"deviceid": device_id}
+        rect: Optional[list[int]] = None,
+        enhanced: bool = False,
+    ) -> ApiResult:
+        """OCR the screen (``/pic/ocr`` or the heavier ``/pic/ocr-ex``).
+
+        Each result carries ``centre: [x, y]`` (tap target) and ``rect``.
+        Returns code 28 until the PaddleOCR plugin process is running.
+        ``rect`` crops the processed region to cut OCR time.
+        """
+        data: dict[str, Any] = {"id": device_id}
         if rect:
             data["rect"] = rect
-        fun = "ocr_ex" if enhanced else "ocr"
-        return await self._request(fun, data)
+        return await self.call("/pic/ocr-ex" if enhanced else "/pic/ocr", **data)
+
+    async def find_text(
+        self,
+        device_id: str,
+        text: list[str],
+        similarity: float = 0.8,
+        contain: bool = True,
+        rect: Optional[list[int]] = None,
+    ) -> list[dict]:
+        """Locate on-screen text and return matches with a tap ``centre``.
+
+        Preferred over hardcoded coordinates for anything with a text label.
+        Lower ``similarity`` for accented/stylised type -- the bundled model is
+        tuned for Chinese and English.
+        """
+        data: dict[str, Any] = {
+            "id": device_id,
+            "text": text,
+            "similarity": similarity,
+            "contain": contain,
+        }
+        if rect:
+            data["rect"] = rect
+        result = await self.call("/pic/find-text", **data)
+        return result.items
 
     async def find_image(
         self,
         device_id: str,
         image_base64: str,
-        rect: Optional[list] = None,
-        similarity: float = 0.9
-    ) -> ApiResponse:
-        """Find an image on screen."""
-        data = {
-            "deviceid": device_id,
+        similarity: float = 0.9,
+        rect: Optional[list[int]] = None,
+    ) -> list[dict]:
+        """Template-match an icon (``/pic/find-image``).
+
+        Requires the OpenCV plugin, which the handover notes is not installed on
+        the reference machine -- expect a failure until it is.
+        """
+        data: dict[str, Any] = {
+            "id": device_id,
             "img": image_base64,
-            "similarity": similarity
+            "similarity": similarity,
         }
         if rect:
             data["rect"] = rect
-        return await self._request("find_image", data)
+        result = await self.call("/pic/find-image", **data)
+        return result.items
 
-    # Shortcuts
-    async def shortcut(
-        self,
-        device_id: str,
-        shortcut_id: int,
-        devices: Optional[list] = None,
-        timeout: int = 30,
-        parameter: Optional[dict] = None
-    ) -> ApiResponse:
-        """Execute a device shortcut."""
-        data = {
-            "deviceid": device_id,
-            "id": shortcut_id,
-            "outtime": timeout
-        }
-        if devices:
-            data["devlist"] = devices
-        if parameter:
-            data["parameter"] = json.dumps(parameter)
-        return await self._request("shortcut", data)
+    # ----------------------------------------------------------- shortcuts ----
+    async def clipboard_set(self, device_id: str, text: str, sleep: int = 0) -> ApiResult:
+        """Push UTF-8 text to the phone clipboard (``/shortcut/clipboard/set``).
 
-    # Device Control
-    async def restart_device(self, device_id: str) -> ApiResponse:
-        """Restart the device."""
-        return await self._request("restart_device", {"deviceid": device_id})
+        The reliable way to enter non-ASCII text: set the clipboard, focus the
+        field, brief pause, then send ``fn_key='WIN+v'``.
+        """
+        return await self.call(
+            "/shortcut/clipboard/set", id=device_id, text=text, sleep=sleep
+        )
 
-    async def restart_usb(self, device_id: str) -> ApiResponse:
-        """Restart USB connection."""
-        return await self._request("restart_usb", {"deviceid": device_id})
+    async def clipboard_get(self, device_id: str) -> ApiResult:
+        return await self.call("/shortcut/clipboard/get", id=device_id)
 
+    async def exec_url(self, device_id: str, url: str) -> ApiResult:
+        """Open a URL or deep link on the phone (``/shortcut/exec/url``)."""
+        return await self.call("/shortcut/exec/url", id=device_id, url=url)
 
-class PhoneFarmWebSocket:
-    """WebSocket client for real-time updates and screenshot streaming."""
-
-    def __init__(self, config: Config):
-        self.config = config
-        self.ws_url = config.ws_url
-        self._ws: Optional[WebSocketClientProtocol] = None
-        self._running = False
-        self._callbacks: dict[str, list[Callable]] = {}
-
-    async def connect(self):
-        """Connect to WebSocket server."""
-        self._ws = await websockets.connect(self.ws_url)
-        self._running = True
-
-    async def disconnect(self):
-        """Disconnect from WebSocket server."""
-        self._running = False
-        if self._ws:
-            await self._ws.close()
-
-    def on(self, event: str, callback: Callable):
-        """Register event callback."""
-        if event not in self._callbacks:
-            self._callbacks[event] = []
-        self._callbacks[event].append(callback)
-
-    async def _emit(self, event: str, data: Any):
-        """Emit event to callbacks."""
-        for callback in self._callbacks.get(event, []):
-            if asyncio.iscoroutinefunction(callback):
-                await callback(data)
-            else:
-                callback(data)
-
-    async def send(self, fun: str, data: dict = None, msgid: int = 0):
-        """Send a message."""
-        if self._ws:
-            payload = {
-                "fun": fun,
-                "msgid": msgid,
-                "data": data or {}
-            }
-            await self._ws.send(json.dumps(payload))
-
-    async def start_screenshot_loop(
-        self,
-        device_id: str,
-        interval_ms: int = 100,
-        as_jpeg: bool = True
-    ):
-        """Start continuous screenshot streaming."""
-        await self.send("loop_device_screenshot", {
-            "deviceid": device_id,
-            "time": interval_ms,
-            "isjpg": as_jpeg
-        })
-
-    async def stop_screenshot_loop(self, device_id: str):
-        """Stop screenshot streaming."""
-        await self.send("loop_device_screenshot", {
-            "deviceid": device_id,
-            "stop": True
-        })
-
-    async def listen(self):
-        """Listen for incoming messages."""
-        if not self._ws:
-            raise RuntimeError("WebSocket not connected")
-
-        while self._running:
-            try:
-                message = await self._ws.recv()
-                if isinstance(message, bytes):
-                    # Binary screenshot data
-                    await self._emit("screenshot", message)
-                else:
-                    # JSON message
-                    data = json.loads(message)
-                    fun = data.get("fun", "unknown")
-                    await self._emit(fun, data)
-                    await self._emit("message", data)
-            except websockets.exceptions.ConnectionClosed:
-                await self._emit("disconnected", None)
-                break
-            except Exception as e:
-                await self._emit("error", str(e))
+    async def device_ip(self, device_id: str) -> ApiResult:
+        return await self.call("/shortcut/device/ip", id=device_id)

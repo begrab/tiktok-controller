@@ -1,392 +1,302 @@
-"""High-level TikTok actions using PhoneFarm API."""
+"""High-level TikTok actions built on the iMouse XP API.
+
+All coordinates go through :meth:`Device.to_pixels`, which maps fractions into
+the ``imgw x imgh`` mirror-stream space -- the only space that produces correct
+taps. Text targets (Follow, Post) are located with ``/pic/find-text`` rather
+than hardcoded coordinates; icon targets fall back to calibratable anchors.
+
+Comment text is entered via the clipboard-then-paste flow so emoji and accented
+characters survive (``/key/sendkey`` is ASCII only).
+"""
+from __future__ import annotations
+
 import asyncio
-import re
 import logging
-from typing import Optional, Any
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
+from typing import Optional
 
-from api_client import PhoneFarmClient, ApiResponse
-from ai_comments import AICommentGenerator, VideoContext
+from ai_comments import AICommentGenerator, VideoContext, encode_jpeg
+from api_client import IMouseClient, IMouseError
 from config import Config
+from device_manager import Device, DeviceRegistry
 
-logger = logging.getLogger("tiktok_controller")
+logger = logging.getLogger("tiktok")
 
 
 @dataclass
-class DeviceInfo:
-    """Device information - wrapper for compatibility."""
-    device_id: str
-    name: str
-    model: str
-    width: int
-    height: int
-    state: int  # 1 = online
-    ip: str = ""
-
-    @property
-    def is_online(self) -> bool:
-        return self.state == 1
+class ActionResult:
+    success: bool
+    message: str = ""
+    data: dict = field(default_factory=dict)
 
     @classmethod
-    def from_api(cls, device_id: str, data: dict) -> "DeviceInfo":
-        return cls(
-            device_id=device_id,
-            name=data.get("name", ""),
-            model=data.get("model", "Unknown"),
-            width=data.get("width", 0),
-            height=data.get("height", 0),
-            state=data.get("state", 0),
-            ip=data.get("ip", "")
-        )
+    def ok(cls, message: str = "", **data) -> "ActionResult":
+        return cls(True, message, data)
 
     @classmethod
-    def from_device(cls, device: Any) -> "DeviceInfo":
-        """Create from DeviceManager's Device object."""
-        return cls(
-            device_id=device.device_id,
-            name=device.name,
-            model=device.model,
-            width=device.width,
-            height=device.height,
-            state=device.state,
-            ip=device.ip
-        )
+    def fail(cls, message: str) -> "ActionResult":
+        return cls(False, message)
 
 
 class TikTokController:
-    """High-level TikTok automation controller."""
+    """Orchestrates TikTok interactions across one or more devices."""
 
-    def __init__(self, config: Config, device_manager: Optional[Any] = None):
+    def __init__(self, config: Config, client: IMouseClient, registry: DeviceRegistry):
         self.config = config
-        self._device_manager = device_manager
-        # Pass device_manager to api client for WebSocket fallback
-        self.api = PhoneFarmClient(config, device_manager)
+        self.api = client
+        self.registry = registry
         self.ai = AICommentGenerator(config)
-        self._devices: dict[str, DeviceInfo] = {}  # Fallback cache
 
-    async def __aenter__(self):
-        await self.api.__aenter__()
-        return self
+    # ------------------------------------------------------------- devices ----
+    async def get_device(self, device_id: str) -> Optional[Device]:
+        return await self.registry.get_or_refresh(device_id)
 
-    async def __aexit__(self, *args):
-        await self.api.__aexit__(*args)
-
-    def _get_coords(self, device: DeviceInfo, ui_key: str) -> tuple[int, int]:
-        """Convert percentage-based UI coordinates to pixels."""
+    async def _coords(self, device: Device, ui_key: str) -> tuple[int, int]:
         ui = self.config.tiktok_ui.get(ui_key, {"x": 0.5, "y": 0.5})
-        x = int(device.width * ui["x"])
-        y = int(device.height * ui["y"])
-        return x, y
+        return device.to_pixels(ui["x"], ui["y"])
 
-    async def refresh_devices(self) -> list[DeviceInfo]:
-        """Refresh and return list of devices."""
-        logger.info("Refreshing device list...")
+    # ---------------------------------------------------------- screenshots ---
+    async def get_screenshot_bytes(self, device_id: str) -> bytes:
+        """Raw JPEG bytes of the current screen."""
+        return await self.api.screenshot(device_id, binary=True)
 
-        # Prefer WebSocket-based device manager
-        if self._device_manager:
-            devices = await self._device_manager.refresh_devices()
-            self._devices = {d.device_id: DeviceInfo.from_device(d) for d in devices}
-            logger.info(f"Devices from WebSocket: {len(self._devices)}")
-            return list(self._devices.values())
-
-        # Fallback to HTTP API (may not work on iMouseXP)
-        logger.warning("No device manager, falling back to HTTP API")
-        response = await self.api.get_device_list()
-
-        if not response.success:
-            logger.error(f"Failed to get device list: {response.message}")
-            return list(self._devices.values())
-
-        if not response.data:
-            logger.warning("Device list response has no data")
-            return list(self._devices.values())
-
-        # Handle different response formats
-        self._devices = {}
-
-        if isinstance(response.data, dict):
-            for device_id, data in response.data.items():
-                try:
-                    self._devices[device_id] = DeviceInfo.from_api(device_id, data)
-                    logger.info(f"Found device: {device_id} ({data.get('model', 'Unknown')})")
-                except Exception as e:
-                    logger.error(f"Error parsing device {device_id}: {e}")
-
-        elif isinstance(response.data, list):
-            for item in response.data:
-                if isinstance(item, dict):
-                    device_id = item.get("deviceid") or item.get("device_id") or item.get("id")
-                    if device_id:
-                        try:
-                            self._devices[device_id] = DeviceInfo.from_api(device_id, item)
-                            logger.info(f"Found device: {device_id}")
-                        except Exception as e:
-                            logger.error(f"Error parsing device: {e}")
-
-        logger.info(f"Total devices found: {len(self._devices)}")
-        return list(self._devices.values())
-
-    async def get_devices(self) -> list[DeviceInfo]:
-        """Get cached device list or refresh if empty."""
-        # Check device manager first
-        if self._device_manager and self._device_manager.devices:
-            return [DeviceInfo.from_device(d) for d in self._device_manager.devices]
-
-        if not self._devices:
-            await self.refresh_devices()
-        return list(self._devices.values())
-
-    async def get_device(self, device_id: str) -> Optional[DeviceInfo]:
-        """Get a specific device."""
-        # Check device manager first
-        if self._device_manager:
-            device = self._device_manager.get_device(device_id)
-            if device:
-                return DeviceInfo.from_device(device)
-
-        if device_id not in self._devices:
-            await self.refresh_devices()
-        return self._devices.get(device_id)
-
-    # Screenshot and Analysis
-    async def get_screenshot(self, device_id: str) -> Optional[str]:
-        """Get screenshot as base64."""
-        response = await self.api.get_screenshot(device_id)
-        if response.success and response.data:
-            return response.data.get("img")
-        return None
+    async def get_screenshot_b64(self, device_id: str) -> str:
+        """Base64 JPEG, for the web UI and the vision API."""
+        return encode_jpeg(await self.get_screenshot_bytes(device_id))
 
     async def analyze_current_video(self, device_id: str) -> VideoContext:
-        """Analyze the currently displayed TikTok video."""
-        screenshot = await self.get_screenshot(device_id)
-        context = VideoContext(screenshot_base64=screenshot)
+        """Read the current video via vision + OCR into a :class:`VideoContext`."""
+        context = VideoContext()
 
-        if screenshot and self.config.openai_api_key:
+        try:
+            context.screenshot_base64 = await self.get_screenshot_b64(device_id)
+        except IMouseError as exc:
+            logger.warning("screenshot for analysis failed: %s", exc)
+            return context
+
+        # Vision analysis (only if an Anthropic key is configured).
+        if context.screenshot_base64 and self.config.anthropic_api_key:
             try:
-                analysis = await self.ai.analyze_screenshot(screenshot)
-                context.caption = analysis.get("caption")
-                context.hashtags = analysis.get("hashtags", [])
-                context.username = analysis.get("username")
-                context.ocr_text = analysis.get("content_description")
-            except Exception as e:
-                print(f"AI analysis failed: {e}")
+                analysis = await self.ai.analyze_screenshot(context.screenshot_base64)
+                context.caption = analysis.get("caption") or None
+                context.hashtags = analysis.get("hashtags") or []
+                context.username = analysis.get("username") or None
+                context.ocr_text = analysis.get("content_description") or None
+            except Exception as exc:  # noqa: BLE001 - never let AI break analysis
+                logger.warning("vision analysis failed: %s", exc)
 
-        # Also try OCR for text extraction
+        # OCR the caption region as a supplement. Gracefully skip if the OCR
+        # plugin is not running (code 28).
         device = await self.get_device(device_id)
-        if device:
-            caption_area = self.config.tiktok_ui.get("caption_area", {})
-            rect = [
-                int(device.width * caption_area.get("x", 0)),
-                int(device.height * caption_area.get("y", 0)),
-                int(device.width * (caption_area.get("x", 0) + caption_area.get("w", 1))),
-                int(device.height * (caption_area.get("y", 0) + caption_area.get("h", 1)))
-            ]
-            ocr_response = await self.api.ocr(device_id, rect)
-            if ocr_response.success and ocr_response.data:
-                texts = [item.get("text", "") for item in ocr_response.data if "text" in item]
-                ocr_text = " ".join(texts)
-                if ocr_text:
+        if device and device.has_coord_space:
+            area = self.config.tiktok_ui.get("caption_area")
+            rect = None
+            if area:
+                x0, y0 = device.to_pixels(area["x"], area["y"])
+                x1, y1 = device.to_pixels(area["x"] + area["w"], area["y"] + area["h"])
+                rect = [x0, y0, x1, y1]
+            try:
+                result = await self.api.ocr(device_id, rect=rect)
+                texts = [i.get("text", "") for i in result.items if i.get("text")]
+                if texts:
+                    ocr_text = " ".join(texts)
                     context.ocr_text = ocr_text
-                    # Extract hashtags from OCR
-                    hashtags = re.findall(r'#\w+', ocr_text)
-                    context.hashtags = list(set(context.hashtags + hashtags))
+                    context.hashtags = sorted(
+                        set(context.hashtags) | set(re.findall(r"#\w+", ocr_text))
+                    )
+            except IMouseError as exc:
+                if exc.code == 28:
+                    logger.info("OCR skipped: plugin not connected (code 28)")
+                else:
+                    logger.warning("OCR failed: %s", exc)
 
         return context
 
-    # Core Actions
-    async def swipe_next(self, device_id: str) -> ApiResponse:
-        """Swipe to next video."""
-        return await self.api.swipe(
-            device_id,
-            direction="up",
-            length=self.config.swipe_length
-        )
+    # ---------------------------------------------------------- core taps -----
+    async def _click(self, device_id: str, x: int, y: int) -> ActionResult:
+        try:
+            await self.api.click(device_id, x, y)
+            return ActionResult.ok()
+        except IMouseError as exc:
+            return ActionResult.fail(str(exc))
 
-    async def swipe_previous(self, device_id: str) -> ApiResponse:
-        """Swipe to previous video."""
-        return await self.api.swipe(
-            device_id,
-            direction="down",
-            length=self.config.swipe_length
-        )
+    async def swipe_next(self, device_id: str) -> ActionResult:
+        try:
+            await self.api.swipe(device_id, "up", self.config.swipe_length)
+            return ActionResult.ok("Swiped to next video")
+        except IMouseError as exc:
+            return ActionResult.fail(str(exc))
 
-    async def like_video(self, device_id: str, use_double_tap: bool = True) -> ApiResponse:
-        """Like the current video."""
+    async def swipe_previous(self, device_id: str) -> ActionResult:
+        try:
+            await self.api.swipe(device_id, "down", self.config.swipe_length)
+            return ActionResult.ok("Swiped to previous video")
+        except IMouseError as exc:
+            return ActionResult.fail(str(exc))
+
+    async def like_video(self, device_id: str, use_double_tap: bool = True) -> ActionResult:
         device = await self.get_device(device_id)
         if not device:
-            return ApiResponse(False, -1, None, "Device not found")
+            return ActionResult.fail("Device not found")
 
         if use_double_tap:
-            # Double tap center of video
-            x, y = self._get_coords(device, "video_center")
-            await self.api.click(device_id, x, y, duration=self.config.click_duration)
-            await asyncio.sleep(self.config.double_tap_interval / 1000)
-            return await self.api.click(device_id, x, y, duration=self.config.click_duration)
-        else:
-            # Tap heart icon
-            x, y = self._get_coords(device, "like_button")
-            return await self.api.click(device_id, x, y, duration=self.config.click_duration)
+            x, y = await self._coords(device, "video_center")
+            try:
+                await self.api.click(device_id, x, y)
+                await asyncio.sleep(0.12)
+                await self.api.click(device_id, x, y)
+                return ActionResult.ok("Liked (double-tap)")
+            except IMouseError as exc:
+                return ActionResult.fail(str(exc))
 
-    async def save_video(self, device_id: str) -> ApiResponse:
-        """Save/bookmark the current video."""
-        device = await self.get_device(device_id)
-        if not device:
-            return ApiResponse(False, -1, None, "Device not found")
-
-        # Tap share button
-        x, y = self._get_coords(device, "share_button")
-        await self.api.click(device_id, x, y, duration=self.config.click_duration)
-
-        # Wait for menu
-        await asyncio.sleep(0.5)
-
-        # Tap save button
-        x, y = self._get_coords(device, "save_button")
-        result = await self.api.click(device_id, x, y, duration=self.config.click_duration)
-
-        # Tap elsewhere to close menu if still open
-        await asyncio.sleep(0.3)
-        await self.api.click(device_id, device.width // 2, device.height // 4)
-
+        x, y = await self._coords(device, "like_button")
+        result = await self._click(device_id, x, y)
+        result.message = "Liked" if result.success else result.message
         return result
 
-    async def follow_creator(self, device_id: str) -> ApiResponse:
-        """Follow the current video's creator."""
+    async def save_video(self, device_id: str) -> ActionResult:
+        """Open the share sheet and tap the Save/bookmark entry (located by text)."""
         device = await self.get_device(device_id)
         if not device:
-            return ApiResponse(False, -1, None, "Device not found")
+            return ActionResult.fail("Device not found")
 
-        x, y = self._get_coords(device, "follow_button")
-        return await self.api.click(device_id, x, y, duration=self.config.click_duration)
+        x, y = await self._coords(device, "share_button")
+        if not (await self._click(device_id, x, y)).success:
+            return ActionResult.fail("Could not open share menu")
+        await asyncio.sleep(self.config.action_delay)
 
-    async def open_comments(self, device_id: str) -> ApiResponse:
-        """Open comment section."""
+        # The Save/Favorites entry carries a text label -- find it.
+        if await self._tap_text(device_id, ["Save", "Favorites", "Add to Favorites"]):
+            return ActionResult.ok("Saved video")
+        return ActionResult.fail("Save option not found (share menu text not matched)")
+
+    async def follow_creator(self, device_id: str) -> ActionResult:
+        if await self._tap_text(device_id, ["Follow"]):
+            return ActionResult.ok("Followed creator")
+        return ActionResult.fail("Follow button not found")
+
+    # ------------------------------------------------------------ comments ----
+    async def _tap_text(
+        self, device_id: str, candidates: list[str], similarity: Optional[float] = None
+    ) -> bool:
+        """Find any of ``candidates`` on screen and tap its centre. False if none."""
+        try:
+            matches = await self.api.find_text(
+                device_id,
+                candidates,
+                similarity=similarity or self.config.ocr_similarity,
+            )
+        except IMouseError as exc:
+            if exc.code == 28:
+                logger.info("find-text needs the OCR plugin (code 28)")
+            else:
+                logger.warning("find-text failed: %s", exc)
+            return False
+
+        for match in matches:
+            centre = match.get("centre") or match.get("center")
+            if centre and len(centre) == 2:
+                await self.api.click(device_id, int(centre[0]), int(centre[1]))
+                return True
+        return False
+
+    async def open_comments(self, device_id: str) -> ActionResult:
         device = await self.get_device(device_id)
         if not device:
-            return ApiResponse(False, -1, None, "Device not found")
+            return ActionResult.fail("Device not found")
+        x, y = await self._coords(device, "comment_button")
+        return await self._click(device_id, x, y)
 
-        x, y = self._get_coords(device, "comment_button")
-        return await self.api.click(device_id, x, y, duration=self.config.click_duration)
+    async def enter_text(self, device_id: str, text: str) -> ActionResult:
+        """Type ``text`` into the focused field.
 
-    async def type_comment(self, device_id: str, text: str) -> ApiResponse:
-        """Type a comment in the comment input field."""
-        device = await self.get_device(device_id)
-        if not device:
-            return ApiResponse(False, -1, None, "Device not found")
-
-        # Tap comment input field
-        x, y = self._get_coords(device, "comment_input")
-        await self.api.click(device_id, x, y, duration=self.config.click_duration)
-        await asyncio.sleep(0.3)
-
-        # Type the comment character by character or use send_text for unicode
-        if all(ord(c) < 128 for c in text):
-            # ASCII text - can use send_key
-            return await self.api.send_key(device_id, key=text)
-        else:
-            # Unicode text - use send_text
-            return await self.api.send_text(device_id, text)
-
-    async def post_comment(self, device_id: str) -> ApiResponse:
-        """Submit the typed comment."""
-        device = await self.get_device(device_id)
-        if not device:
-            return ApiResponse(False, -1, None, "Device not found")
-
-        x, y = self._get_coords(device, "post_button")
-        return await self.api.click(device_id, x, y, duration=self.config.click_duration)
+        ASCII goes through ``/key/sendkey``; anything else uses the clipboard
+        paste flow (set clipboard -> brief pause -> WIN+v) so emoji and accented
+        characters survive.
+        """
+        try:
+            if all(ord(c) < 128 for c in text):
+                await self.api.send_key(device_id, key=text)
+            else:
+                await self.api.clipboard_set(device_id, text)
+                await asyncio.sleep(self.config.paste_delay)
+                await self.api.send_key(device_id, fn_key="WIN+v")
+            return ActionResult.ok("Text entered")
+        except IMouseError as exc:
+            return ActionResult.fail(str(exc))
 
     async def comment_on_video(
         self,
         device_id: str,
         comment: Optional[str] = None,
         use_ai: bool = True,
-        ai_style: str = "friendly"
-    ) -> dict:
-        """Full comment flow: analyze, generate/use comment, post."""
-        result = {"success": False, "comment": "", "message": ""}
+        ai_style: str = "friendly",
+    ) -> ActionResult:
+        """Full flow: open comments, (optionally) generate, type, and post."""
+        device = await self.get_device(device_id)
+        if not device:
+            return ActionResult.fail("Device not found")
 
-        try:
-            # Open comments
-            await self.open_comments(device_id)
-            await asyncio.sleep(0.5)
-
-            # Generate comment if needed
-            if comment is None and use_ai:
-                context = await self.analyze_current_video(device_id)
+        if comment is None and use_ai:
+            context = await self.analyze_current_video(device_id)
+            try:
                 comment = await self.ai.generate_comment(context, style=ai_style)
+            except Exception as exc:  # noqa: BLE001
+                return ActionResult.fail(f"AI comment generation failed: {exc}")
+        if not comment:
+            return ActionResult.fail("No comment text available")
 
-            if not comment:
-                result["message"] = "No comment provided and AI generation failed"
-                return result
+        # Open the comment sheet and focus the input field.
+        if not (await self.open_comments(device_id)).success:
+            return ActionResult.fail("Could not open comments")
+        await asyncio.sleep(self.config.action_delay)
+        x, y = await self._coords(device, "comment_input")
+        await self._click(device_id, x, y)
+        await asyncio.sleep(self.config.paste_delay)
 
-            result["comment"] = comment
+        entered = await self.enter_text(device_id, comment)
+        if not entered.success:
+            return ActionResult.fail(f"Could not enter comment: {entered.message}")
+        await asyncio.sleep(self.config.paste_delay)
 
-            # Type comment
-            await self.type_comment(device_id, comment)
-            await asyncio.sleep(0.3)
+        # Post: prefer the labelled Send/Post button, else Enter.
+        if not await self._tap_text(device_id, ["Post", "Send"]):
+            try:
+                await self.api.send_key(device_id, fn_key="ENTER")
+            except IMouseError as exc:
+                return ActionResult.fail(f"Could not post comment: {exc}")
 
-            # Post comment
-            response = await self.post_comment(device_id)
-            result["success"] = response.success
-            result["message"] = response.message
+        return ActionResult.ok("Comment posted", comment=comment)
 
-            # Close comments (tap outside)
-            await asyncio.sleep(0.5)
-            device = await self.get_device(device_id)
-            if device:
-                await self.api.click(device_id, device.width // 2, 50)
-
-        except Exception as e:
-            result["message"] = str(e)
-
-        return result
-
-    async def generate_comment_options(
-        self,
-        device_id: str,
-        count: int = 3
-    ) -> list[str]:
-        """Generate multiple comment options for the current video."""
+    async def generate_comment_options(self, device_id: str, count: int = 3) -> list[str]:
         context = await self.analyze_current_video(device_id)
         return await self.ai.generate_multiple_comments(context, count=count)
 
-    # Batch Operations
-    async def batch_action(
-        self,
-        device_ids: list[str],
-        action: str,
-        **kwargs
-    ) -> dict[str, ApiResponse]:
-        """Perform an action on multiple devices."""
-        results = {}
-
-        action_map = {
+    # ------------------------------------------------------------- batch ------
+    async def batch_action(self, device_ids: list[str], action: str, **kwargs) -> dict:
+        actions = {
             "swipe_next": self.swipe_next,
             "swipe_previous": self.swipe_previous,
             "like": self.like_video,
             "save": self.save_video,
             "follow": self.follow_creator,
         }
+        fn = actions.get(action)
+        if fn is None:
+            return {d: ActionResult.fail(f"Unknown action: {action}") for d in device_ids}
 
-        if action not in action_map:
-            for device_id in device_ids:
-                results[device_id] = ApiResponse(False, -1, None, f"Unknown action: {action}")
-            return results
+        results = await asyncio.gather(
+            *(fn(d, **kwargs) for d in device_ids), return_exceptions=True
+        )
+        out = {}
+        for device_id, res in zip(device_ids, results):
+            out[device_id] = (
+                ActionResult.fail(str(res)) if isinstance(res, Exception) else res
+            )
+        return out
 
-        action_fn = action_map[action]
-        tasks = [action_fn(device_id, **kwargs) for device_id in device_ids]
-        responses = await asyncio.gather(*tasks, return_exceptions=True)
-
-        for device_id, response in zip(device_ids, responses):
-            if isinstance(response, Exception):
-                results[device_id] = ApiResponse(False, -1, None, str(response))
-            else:
-                results[device_id] = response
-
-        return results
-
-    # Automation Sequences
+    # --------------------------------------------------------- automation -----
     async def auto_browse(
         self,
         device_id: str,
@@ -394,35 +304,23 @@ class TikTokController:
         like_probability: float = 0.3,
         comment_probability: float = 0.1,
         min_watch_time: float = 3.0,
-        max_watch_time: float = 15.0
+        max_watch_time: float = 15.0,
     ) -> dict:
-        """Automated browsing with random engagement."""
+        """Browse with randomised human-like engagement."""
         import random
 
         stats = {"videos": 0, "likes": 0, "comments": 0, "errors": []}
-
-        for i in range(video_count):
+        for _ in range(video_count):
             try:
-                # Watch for random duration
-                watch_time = random.uniform(min_watch_time, max_watch_time)
-                await asyncio.sleep(watch_time)
-
-                # Maybe like
+                await asyncio.sleep(random.uniform(min_watch_time, max_watch_time))
                 if random.random() < like_probability:
-                    await self.like_video(device_id)
-                    stats["likes"] += 1
-
-                # Maybe comment
+                    if (await self.like_video(device_id)).success:
+                        stats["likes"] += 1
                 if random.random() < comment_probability:
-                    result = await self.comment_on_video(device_id, use_ai=True)
-                    if result["success"]:
+                    if (await self.comment_on_video(device_id, use_ai=True)).success:
                         stats["comments"] += 1
-
-                # Swipe to next
                 await self.swipe_next(device_id)
                 stats["videos"] += 1
-
-            except Exception as e:
-                stats["errors"].append(str(e))
-
+            except Exception as exc:  # noqa: BLE001
+                stats["errors"].append(str(exc))
         return stats

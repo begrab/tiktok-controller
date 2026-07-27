@@ -180,7 +180,7 @@ echo.
 :: Step 8: Show configuration
 :: -----------------------------------------------------------------------------
 echo [INFO] Configuration:
-"%VENV_PYTHON%" -c "from config import IMOUSE_HOST, IMOUSE_HTTP_PORT; print(f'  iMouse: {IMOUSE_HOST}:{IMOUSE_HTTP_PORT}')"
+"%VENV_PYTHON%" -c "from config import IMOUSE_HOST, IMOUSE_PORT; print(f'  iMouse: {IMOUSE_HOST}:{IMOUSE_PORT}')"
 echo.
 
 :: -----------------------------------------------------------------------------

@@ -57,9 +57,9 @@ class TikTokController {
     async saveConfig() {
         const settings = {
             imouse_host: document.getElementById('setting-host').value || undefined,
-            imouse_http_port: parseInt(document.getElementById('setting-port').value) || undefined,
-            openai_api_key: document.getElementById('setting-openai-key').value || undefined,
-            openai_model: document.getElementById('setting-openai-model').value || undefined
+            imouse_port: parseInt(document.getElementById('setting-port').value) || undefined,
+            anthropic_api_key: document.getElementById('setting-anthropic-key').value || undefined,
+            anthropic_model: document.getElementById('setting-anthropic-model').value || undefined
         };
 
         // Remove undefined values
@@ -79,8 +79,9 @@ class TikTokController {
 
     updateSettingsUI() {
         document.getElementById('setting-host').value = this.config.imouse_host || '';
-        document.getElementById('setting-port').value = this.config.imouse_http_port || '';
-        document.getElementById('setting-openai-model').value = this.config.openai_model || 'gpt-4o';
+        document.getElementById('setting-port').value = this.config.imouse_port || '';
+        document.getElementById('setting-anthropic-model').value =
+            this.config.anthropic_model || 'claude-haiku-4-5-20251001';
     }
 
     // Device Management
@@ -252,8 +253,8 @@ class TikTokController {
     // Comments
     async generateComments() {
         if (!this.selectedDevice) return;
-        if (!this.config.has_openai_key) {
-            this.showToast('OpenAI API key not configured', 'error');
+        if (!this.config.has_anthropic_key) {
+            this.showToast('Anthropic API key not configured', 'error');
             this.openModal();
             return;
         }
@@ -314,8 +315,8 @@ class TikTokController {
     // Video Analysis
     async analyzeVideo() {
         if (!this.selectedDevice) return;
-        if (!this.config.has_openai_key) {
-            this.showToast('OpenAI API key not configured', 'error');
+        if (!this.config.has_anthropic_key) {
+            this.showToast('Anthropic API key not configured', 'error');
             this.openModal();
             return;
         }

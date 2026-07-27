@@ -124,44 +124,41 @@
                 </div>
                 <div class="modal-body">
                     <div class="setting-group">
-                        <h4>iMouse/PhoneFarm Connection</h4>
+                        <h4>iMouse XP Connection</h4>
                         <label>
                             Host:
                             <input type="text" id="setting-host" placeholder="127.0.0.1">
                         </label>
                         <label>
-                            HTTP Port:
-                            <input type="number" id="setting-port" placeholder="9912">
+                            API Port:
+                            <input type="number" id="setting-port" placeholder="9911">
                         </label>
                     </div>
                     <div class="setting-group">
-                        <h4>OpenAI Configuration</h4>
+                        <h4>Anthropic (Claude) Configuration</h4>
                         <label>
                             API Key:
-                            <input type="password" id="setting-openai-key" placeholder="sk-...">
+                            <input type="password" id="setting-anthropic-key" placeholder="sk-ant-...">
                         </label>
                         <label>
                             Model:
-                            <select id="setting-openai-model">
-                                <option value="gpt-4o">GPT-4o</option>
-                                <option value="gpt-4o-mini">GPT-4o Mini</option>
-                                <option value="gpt-4-turbo">GPT-4 Turbo</option>
+                            <select id="setting-anthropic-model">
+                                <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
+                                <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
+                                <option value="claude-opus-4-8">Claude Opus 4.8</option>
                             </select>
                         </label>
                     </div>
                     <div class="setting-group">
                         <h4>UI Calibration</h4>
-                        <p class="hint">Click on the preview to calibrate button positions</p>
+                        <p class="hint">Click on the preview to calibrate icon positions. Text buttons (Follow, Save, Post) are located automatically.</p>
                         <select id="calibration-element">
                             <option value="">Select element to calibrate...</option>
                             <option value="like_button">Like Button</option>
                             <option value="comment_button">Comment Button</option>
                             <option value="share_button">Share Button</option>
-                            <option value="save_button">Save Button</option>
-                            <option value="follow_button">Follow Button</option>
                             <option value="video_center">Video Center</option>
                             <option value="comment_input">Comment Input</option>
-                            <option value="post_button">Post Button</option>
                         </select>
                     </div>
                     <button id="save-settings" class="btn">Save Settings</button>

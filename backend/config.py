@@ -1,75 +1,83 @@
-"""Configuration settings for TikTok Controller."""
+"""Configuration for the TikTok controller.
+
+Defaults match the verified iMouse XP setup: the console's local API is on
+``127.0.0.1:9911`` (port 9912, seen in some third-party guides, is wrong) and
+there is no API key -- auth is being on localhost.
+"""
+from __future__ import annotations
+
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-# Optional: Load .env file if python-dotenv is installed
+# Optional: load a .env file if python-dotenv is installed.
 try:
     from dotenv import load_dotenv
-    env_path = Path(__file__).parent / ".env"
-    if env_path.exists():
-        load_dotenv(env_path)
-except ImportError:
-    pass  # python-dotenv not installed, use defaults
+
+    _env_path = Path(__file__).parent / ".env"
+    if _env_path.exists():
+        load_dotenv(_env_path)
+except ImportError:  # python-dotenv not installed -- rely on real env vars.
+    pass
 
 
 # =============================================================================
-# EDIT THESE VALUES FOR YOUR SETUP
+# EDIT THESE FOR YOUR SETUP
 # =============================================================================
-IMOUSE_HOST = "127.0.0.1"      # iMouse server (localhost if same machine)
-IMOUSE_HTTP_PORT = 9911        # iMouse API port (9911 for iMouseXP)
-IMOUSE_WS_PORT = 9911          # iMouse WebSocket port (same as HTTP for iMouseXP)
+IMOUSE_HOST = "127.0.0.1"   # iMouse console (localhost if on the same machine)
+IMOUSE_PORT = 9911          # verified iMouse XP API port -- do NOT use 9912
 # =============================================================================
+
+# Default Claude model. Cheap and fast for per-screenshot calls; the handover
+# lists claude-sonnet-4-6 and claude-opus-4-8 as more capable alternatives.
+DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
 
 @dataclass
 class Config:
-    # iMouse/PhoneFarm server settings (uses values above, or env override)
+    # iMouse XP local API.
     imouse_host: str = os.getenv("IMOUSE_HOST", IMOUSE_HOST)
-    imouse_http_port: int = int(os.getenv("IMOUSE_HTTP_PORT", IMOUSE_HTTP_PORT))
-    imouse_ws_port: int = int(os.getenv("IMOUSE_WS_PORT", IMOUSE_WS_PORT))
+    imouse_port: int = int(os.getenv("IMOUSE_PORT", IMOUSE_PORT))
 
-    # OpenAI settings
-    openai_api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
-    openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o")
+    # Anthropic (only needed when an LLM is in the loop). Read from the
+    # environment; never hardcode a key.
+    anthropic_api_key: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
+    anthropic_model: str = os.getenv("ANTHROPIC_MODEL", DEFAULT_MODEL)
 
-    # TikTok UI coordinates (percentage of screen, calibrate as needed)
-    # These are approximate and may need adjustment per device
-    tiktok_ui: dict = field(default_factory=lambda: {
-        "like_button": {"x": 0.92, "y": 0.45},      # Heart icon on right
-        "comment_button": {"x": 0.92, "y": 0.55},   # Comment icon
-        "share_button": {"x": 0.92, "y": 0.65},     # Share icon
-        "save_button": {"x": 0.5, "y": 0.85},       # Save in share menu
-        "follow_button": {"x": 0.92, "y": 0.35},    # Follow button
-        "video_center": {"x": 0.5, "y": 0.5},       # Center of video
-        "caption_area": {"x": 0.05, "y": 0.75, "w": 0.7, "h": 0.15},  # Caption/hashtags
-        "comment_input": {"x": 0.5, "y": 0.95},     # Comment text field
-        "post_button": {"x": 0.5, "y": 0.95},       # Post comment button
-        "create_button": {"x": 0.5, "y": 0.95},     # Bottom center + button
-    })
+    # OCR / find-text tuning. The bundled model is tuned for Chinese and
+    # English; lower this for accented or stylised Latin text.
+    ocr_similarity: float = 0.8
 
-    # Timing settings (milliseconds)
-    click_duration: int = 50
-    double_tap_interval: int = 100
-    swipe_length: float = 0.5  # 50% of screen
-    action_delay: int = 500    # Delay between actions
+    # Approximate TikTok UI anchors as FRACTIONS of the imgw x imgh coordinate
+    # space. Icons have no text label, so find-text can't locate them -- these
+    # are the fallback and can be calibrated per device from the UI. Anything
+    # with a text label (Follow, Post) is located with find-text instead.
+    tiktok_ui: dict = field(
+        default_factory=lambda: {
+            "like_button": {"x": 0.92, "y": 0.55},
+            "comment_button": {"x": 0.92, "y": 0.66},
+            "share_button": {"x": 0.92, "y": 0.77},
+            "video_center": {"x": 0.5, "y": 0.5},
+            "comment_input": {"x": 0.5, "y": 0.95},
+            "caption_area": {"x": 0.03, "y": 0.72, "w": 0.75, "h": 0.18},
+        }
+    )
+
+    # Timing (seconds).
+    action_delay: float = 0.5      # settle time between chained taps
+    paste_delay: float = 0.3       # focus -> paste settle time
+    swipe_length: float = 0.6      # fraction of the screen per swipe
 
     @property
     def http_base_url(self) -> str:
-        return f"http://{self.imouse_host}:{self.imouse_http_port}/api"
-
-    @property
-    def ws_url(self) -> str:
-        return f"ws://{self.imouse_host}:{self.imouse_ws_port}/client"
+        return f"http://{self.imouse_host}:{self.imouse_port}/api"
 
     @classmethod
     def from_env(cls) -> "Config":
-        """Load configuration. Uses hardcoded defaults from top of file."""
         return cls(
             imouse_host=os.getenv("IMOUSE_HOST", IMOUSE_HOST),
-            imouse_http_port=int(os.getenv("IMOUSE_HTTP_PORT", IMOUSE_HTTP_PORT)),
-            imouse_ws_port=int(os.getenv("IMOUSE_WS_PORT", IMOUSE_WS_PORT)),
-            openai_api_key=os.getenv("OPENAI_API_KEY"),
-            openai_model=os.getenv("OPENAI_MODEL", "gpt-4o"),
+            imouse_port=int(os.getenv("IMOUSE_PORT", IMOUSE_PORT)),
+            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
+            anthropic_model=os.getenv("ANTHROPIC_MODEL", DEFAULT_MODEL),
         )
