@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -296,36 +297,44 @@ async def auto_browse(device_id: str, request: AutoBrowseRequest):
 async def websocket_endpoint(websocket: WebSocket):
     """Stream screenshots to the browser by polling ``/pic/screenshot``.
 
-    The iMouse WebSocket is not used server-side (HTTP is fast enough); this
-    socket is purely between the browser and this server.
+    Frames are sent as raw JPEG **binary** WebSocket messages -- no base64/JSON
+    overhead (~25% smaller, no per-frame serialisation). The loop paces by the
+    real fetch time rather than a fixed sleep, so it runs as fast as the console
+    can supply frames up to the requested rate. The iMouse WebSocket is not used
+    server-side (local HTTP is ~70 ms); this socket is browser <-> this server.
     """
     await websocket.accept()
     ws_clients.add(websocket)
     stream_task: Optional[asyncio.Task] = None
 
     async def stream(device_id: str, interval_ms: int):
+        min_period = max(0.0, interval_ms / 1000)
         while websocket in ws_clients:
+            start = time.monotonic()
             try:
-                shot = await controller.get_screenshot_b64(device_id)
-                await websocket.send_json(
-                    {"type": "screenshot", "device_id": device_id, "data": shot}
-                )
+                frame = await controller.get_screenshot_bytes(device_id)
+                await websocket.send_bytes(frame)
             except Exception:  # noqa: BLE001 - stop streaming on any error
                 break
-            await asyncio.sleep(interval_ms / 1000)
+            # Pace by how long the fetch actually took; no fixed dead time.
+            await asyncio.sleep(max(0.0, min_period - (time.monotonic() - start)))
+
+    def start_stream(data: dict) -> asyncio.Task:
+        nonlocal stream_task
+        if stream_task and not stream_task.done():
+            stream_task.cancel()
+        return asyncio.create_task(
+            stream(data.get("device_id"), data.get("interval", 80))
+        )
 
     try:
         while True:
             data = await websocket.receive_json()
-            if data.get("action") == "start_stream":
-                if stream_task and not stream_task.done():
-                    stream_task.cancel()
-                stream_task = asyncio.create_task(
-                    stream(data.get("device_id"), data.get("interval", 200))
-                )
-            elif data.get("action") == "stop_stream":
-                if stream_task:
-                    stream_task.cancel()
+            action = data.get("action")
+            if action == "start_stream":
+                stream_task = start_stream(data)
+            elif action == "stop_stream" and stream_task:
+                stream_task.cancel()
     except WebSocketDisconnect:
         pass
     finally:

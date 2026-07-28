@@ -132,8 +132,10 @@ class TikTokController {
             this.selectedDevice = device;
             this.selectedDevices.clear();
             this.selectedDevices.add(deviceId);
+            // Start a live view immediately so the preview is instant, not a
+            // single delayed still.
             this.stopStream();
-            this.updateScreenshot();
+            this.startStream();
         }
 
         this.renderDevices();
@@ -141,17 +143,45 @@ class TikTokController {
     }
 
     // Screenshot & Streaming
+
+    // Reuse a single <img> so frames swap in place instead of rebuilding the
+    // DOM node every frame (that caused flicker and slowdown).
+    ensurePreviewImg() {
+        const preview = document.getElementById('device-preview');
+        let img = preview.querySelector('img');
+        if (!img) {
+            preview.innerHTML = '';
+            img = document.createElement('img');
+            img.alt = 'Device screen';
+            preview.appendChild(img);
+        }
+        return img;
+    }
+
+    setPreviewSrc(src) {
+        this.ensurePreviewImg().src = src;
+    }
+
+    // Display a raw JPEG blob via an object URL, revoking the previous one once
+    // the new frame has decoded (avoids a memory leak during streaming).
+    setPreviewBlob(blob) {
+        const url = URL.createObjectURL(blob);
+        const img = this.ensurePreviewImg();
+        const previous = this._previewUrl;
+        img.onload = () => { if (previous) URL.revokeObjectURL(previous); };
+        img.src = url;
+        this._previewUrl = url;
+    }
+
     async updateScreenshot() {
         if (!this.selectedDevice) return;
 
-        const preview = document.getElementById('device-preview');
-        preview.innerHTML = '<p class="placeholder loading"></p>';
-
         try {
             const data = await this.api(`/devices/${this.selectedDevice.device_id}/screenshot`);
-            preview.innerHTML = `<img src="data:image/jpeg;base64,${data.screenshot}" alt="Device screen">`;
+            this.setPreviewSrc(`data:image/jpeg;base64,${data.screenshot}`);
         } catch (error) {
-            preview.innerHTML = '<p class="placeholder">Failed to load screenshot</p>';
+            document.getElementById('device-preview').innerHTML =
+                '<p class="placeholder">Failed to load screenshot</p>';
         }
     }
 
@@ -159,22 +189,29 @@ class TikTokController {
         if (!this.selectedDevice || this.isStreaming) return;
 
         this.ws = new WebSocket(`ws://${window.location.host}/ws`);
+        this.ws.binaryType = 'blob';   // receive JPEG frames as binary, not JSON
 
         this.ws.onopen = () => {
             this.ws.send(JSON.stringify({
                 action: 'start_stream',
                 device_id: this.selectedDevice.device_id,
-                interval: 200
+                interval: 80   // ~12 fps ceiling; actual rate paced by fetch time
             }));
             this.isStreaming = true;
             document.getElementById('toggle-stream').textContent = 'Stop Stream';
         };
 
         this.ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            if (data.type === 'screenshot') {
-                const preview = document.getElementById('device-preview');
-                preview.innerHTML = `<img src="data:image/jpeg;base64,${data.data}" alt="Device screen">`;
+            if (event.data instanceof Blob) {
+                this.setPreviewBlob(event.data);
+            } else {
+                // JSON fallback (kept for compatibility with older servers).
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'screenshot' && data.data) {
+                        this.setPreviewSrc(`data:image/jpeg;base64,${data.data}`);
+                    }
+                } catch (e) { /* ignore non-frame messages */ }
             }
         };
 
@@ -221,8 +258,11 @@ class TikTokController {
             const result = await this.api(endpoint, 'POST');
             if (result.success) {
                 this.showToast(`${action} successful`, 'success');
-                // Update screenshot after action
-                setTimeout(() => this.updateScreenshot(), 500);
+                // The live stream already refreshes the preview; only pull a
+                // one-off shot when streaming is off.
+                if (!this.isStreaming) {
+                    setTimeout(() => this.updateScreenshot(), 500);
+                }
             } else {
                 this.showToast(result.message || 'Action failed', 'error');
             }
