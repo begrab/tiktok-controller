@@ -389,6 +389,64 @@ class TikTokController {
         }
     }
 
+    // AI Agent
+    renderAgentStep(step) {
+        const log = document.getElementById('agent-log');
+        if (log.querySelector('.placeholder')) log.innerHTML = '';
+        const ok = step.success ? 'ok' : 'fail';
+        const args = step.args && Object.keys(step.args).length
+            ? ' ' + this.escapeHtml(JSON.stringify(step.args)) : '';
+        const row = document.createElement('div');
+        row.className = `agent-step ${ok}`;
+        row.innerHTML = `<strong>${this.escapeHtml(step.action || 'error')}</strong>${args}` +
+            ` <span class="agent-msg">${this.escapeHtml(step.message || '')}</span>`;
+        log.appendChild(row);
+        log.scrollTop = log.scrollHeight;
+    }
+
+    async agentStep() {
+        if (!this.selectedDevice) return;
+        if (!this.config.has_anthropic_key) {
+            this.showToast('Anthropic API key not configured', 'error');
+            this.openModal();
+            return;
+        }
+        const goal = document.getElementById('agent-goal').value || undefined;
+        try {
+            const step = await this.api(`/devices/${this.selectedDevice.device_id}/ai/step`,
+                'POST', { goal });
+            this.renderAgentStep(step);
+        } catch (error) {
+            console.error('Agent step failed:', error);
+        }
+    }
+
+    async agentRun() {
+        if (!this.selectedDevice) return;
+        if (!this.config.has_anthropic_key) {
+            this.showToast('Anthropic API key not configured', 'error');
+            this.openModal();
+            return;
+        }
+        const goal = document.getElementById('agent-goal').value || undefined;
+        const maxSteps = parseInt(document.getElementById('agent-steps').value) || 10;
+        const runBtn = document.getElementById('agent-run');
+        runBtn.disabled = true;
+        runBtn.textContent = 'Running…';
+        try {
+            const result = await this.api(`/devices/${this.selectedDevice.device_id}/ai/run`,
+                'POST', { goal, max_steps: maxSteps });
+            document.getElementById('agent-log').innerHTML = '';
+            result.steps.forEach(s => this.renderAgentStep(s));
+            this.showToast(`Agent ran ${result.count} steps`, 'success');
+        } catch (error) {
+            console.error('Agent run failed:', error);
+        } finally {
+            runBtn.disabled = false;
+            runBtn.textContent = 'Run Agent';
+        }
+    }
+
     // UI Calibration
     startCalibration(element) {
         this.calibrationMode = element;
@@ -436,7 +494,7 @@ class TikTokController {
 
     updateActionButtons() {
         const hasDevice = !!this.selectedDevice;
-        document.querySelectorAll('.action-btn, #generate-comments, #post-comment, #analyze-video, #toggle-stream, #take-screenshot').forEach(btn => {
+        document.querySelectorAll('.action-btn, #generate-comments, #post-comment, #analyze-video, #toggle-stream, #take-screenshot, #agent-step, #agent-run').forEach(btn => {
             btn.disabled = !hasDevice;
         });
     }
@@ -511,6 +569,10 @@ class TikTokController {
 
         // Analysis
         document.getElementById('analyze-video').addEventListener('click', () => this.analyzeVideo());
+
+        // AI Agent
+        document.getElementById('agent-step').addEventListener('click', () => this.agentStep());
+        document.getElementById('agent-run').addEventListener('click', () => this.agentRun());
 
         // Settings
         document.getElementById('settings-btn').addEventListener('click', () => this.openModal());

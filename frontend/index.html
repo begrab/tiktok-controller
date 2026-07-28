@@ -113,6 +113,21 @@
                     <p class="placeholder">Analysis results will appear here</p>
                 </div>
             </section>
+
+            <!-- AI Agent -->
+            <section class="agent-panel">
+                <h3>AI Agent</h3>
+                <p class="hint">Claude looks at the screen (vision + OCR) and drives the phone: swipes, likes, comments, follows.</p>
+                <textarea id="agent-goal" placeholder="Goal (leave blank for natural browsing)"></textarea>
+                <div class="agent-controls">
+                    <label>Steps: <input type="number" id="agent-steps" value="10" min="1" max="50"></label>
+                    <button id="agent-step" class="btn-small" disabled>Single Step</button>
+                    <button id="agent-run" class="btn" disabled>Run Agent</button>
+                </div>
+                <div id="agent-log" class="agent-log">
+                    <p class="placeholder">The agent's actions will appear here</p>
+                </div>
+            </section>
         </main>
 
         <!-- Settings Modal -->

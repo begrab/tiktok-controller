@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from ai_agent import TikTokAgent
 from api_client import IMouseClient, IMouseError
 from config import Config
 from device_manager import DeviceRegistry
@@ -26,18 +27,20 @@ config = Config.from_env()
 client: Optional[IMouseClient] = None
 registry: Optional[DeviceRegistry] = None
 controller: Optional[TikTokController] = None
+agent: Optional[TikTokAgent] = None
 ws_clients: set[WebSocket] = set()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global client, registry, controller
+    global client, registry, controller, agent
     logger.info("iMouse API: %s (Claude model: %s)", config.http_base_url, config.anthropic_model)
 
     client = IMouseClient(config)
     await client.__aenter__()
     registry = DeviceRegistry(client)
     controller = TikTokController(config, client, registry)
+    agent = TikTokAgent(controller)
 
     try:
         await registry.refresh()
@@ -107,6 +110,11 @@ class UICalibrationUpdate(BaseModel):
     y: float
     w: Optional[float] = None
     h: Optional[float] = None
+
+
+class AIAgentRequest(BaseModel):
+    goal: Optional[str] = None
+    max_steps: int = 10
 
 
 class RawCommand(BaseModel):
@@ -270,6 +278,23 @@ async def generate_comments(device_id: str, request: GenerateCommentRequest):
         raise HTTPException(status_code=400, detail="Anthropic API key not configured")
     comments = await controller.generate_comment_options(device_id, count=request.count)
     return {"comments": comments}
+
+
+# --------------------------------------------------------------- AI agent -----
+@app.post("/api/devices/{device_id}/ai/step")
+async def ai_step(device_id: str, request: AIAgentRequest):
+    """Run one Claude perceive->decide->act cycle on the device."""
+    if not config.anthropic_api_key:
+        raise HTTPException(status_code=400, detail="Anthropic API key not configured")
+    return await agent.step(device_id, goal=request.goal)
+
+
+@app.post("/api/devices/{device_id}/ai/run")
+async def ai_run(device_id: str, request: AIAgentRequest):
+    """Run the Claude agent for up to max_steps toward a goal."""
+    if not config.anthropic_api_key:
+        raise HTTPException(status_code=400, detail="Anthropic API key not configured")
+    return await agent.run(device_id, goal=request.goal, max_steps=request.max_steps)
 
 
 # ------------------------------------------------------------------ batch -----

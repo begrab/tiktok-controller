@@ -90,6 +90,8 @@ console is reachable and see discovered devices.
 - `POST /api/devices/{id}/like` · `/save` · `/follow`
 - `POST /api/devices/{id}/comment` — type/post a comment (AI optional)
 - `POST /api/devices/{id}/generate-comments` — draft options
+- `POST /api/devices/{id}/ai/step` — one Claude perceive→decide→act cycle
+- `POST /api/devices/{id}/ai/run` — autonomous agent loop (`goal`, `max_steps`)
 - `POST /api/batch/action` — one action across many devices
 - `POST /api/devices/{id}/auto-browse` — randomised engagement session
 - `GET  /api/debug/connection` · `POST /api/debug/raw-command`
@@ -101,6 +103,8 @@ console is reachable and see discovered devices.
   coordinate mapping (`Device`, `DeviceRegistry`).
 - `backend/ai_comments.py` — Claude vision analysis and comment generation.
 - `backend/tiktok_actions.py` — high-level TikTok flows (`TikTokController`).
+- `backend/ai_agent.py` — Claude perceive→decide→act loop (`TikTokAgent`): OCR
+  grounds tappable text, Claude picks one action via tool-use, backend executes.
 - `backend/main.py` — FastAPI server + screenshot streaming to the browser.
 - `frontend/` — HTML/JS control panel.
 
