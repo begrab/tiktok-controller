@@ -128,6 +128,22 @@
                     <p class="placeholder">The agent's actions will appear here</p>
                 </div>
             </section>
+
+            <!-- Manual Keyboard -->
+            <section class="keyboard-panel">
+                <h3>Manual Keyboard</h3>
+                <p class="hint">Type on the phone from your PC while the board stays connected (iOS hides the on-screen keyboard when the board is plugged in). Tap the field on the phone first, then type here.</p>
+                <div class="keyboard-controls">
+                    <input type="text" id="manual-text" placeholder="Type text to send to the phone…">
+                    <button id="manual-send" class="btn" disabled>Send</button>
+                </div>
+                <div class="keyboard-keys">
+                    <button class="btn-small manual-key" data-fn="ENTER" disabled>Enter</button>
+                    <button class="btn-small manual-key" data-fn="BACKSPACE" disabled>Backspace</button>
+                    <button class="btn-small manual-key" data-fn="WIN+h" disabled>Home</button>
+                    <button class="btn-small manual-key" data-fn="TAB+b" disabled>Back</button>
+                </div>
+            </section>
         </main>
 
         <!-- Settings Modal -->

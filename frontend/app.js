@@ -447,6 +447,36 @@ class TikTokController {
         }
     }
 
+    // Manual Keyboard
+    async manualType() {
+        if (!this.selectedDevice) return;
+        const input = document.getElementById('manual-text');
+        const text = input.value;
+        if (!text) return;
+        try {
+            const res = await this.api(`/devices/${this.selectedDevice.device_id}/type`,
+                'POST', { text });
+            if (res.success) {
+                this.showToast('Text sent', 'success');
+                input.value = '';
+            } else {
+                this.showToast(res.message || 'Failed to send text', 'error');
+            }
+        } catch (error) {
+            console.error('Manual type failed:', error);
+        }
+    }
+
+    async manualKey(fnKey) {
+        if (!this.selectedDevice) return;
+        try {
+            await this.api(`/devices/${this.selectedDevice.device_id}/key`,
+                'POST', { fn_key: fnKey });
+        } catch (error) {
+            console.error('Manual key failed:', error);
+        }
+    }
+
     // UI Calibration
     startCalibration(element) {
         this.calibrationMode = element;
@@ -494,7 +524,7 @@ class TikTokController {
 
     updateActionButtons() {
         const hasDevice = !!this.selectedDevice;
-        document.querySelectorAll('.action-btn, #generate-comments, #post-comment, #analyze-video, #toggle-stream, #take-screenshot, #agent-step, #agent-run').forEach(btn => {
+        document.querySelectorAll('.action-btn, #generate-comments, #post-comment, #analyze-video, #toggle-stream, #take-screenshot, #agent-step, #agent-run, #manual-send, .manual-key').forEach(btn => {
             btn.disabled = !hasDevice;
         });
     }
@@ -573,6 +603,15 @@ class TikTokController {
         // AI Agent
         document.getElementById('agent-step').addEventListener('click', () => this.agentStep());
         document.getElementById('agent-run').addEventListener('click', () => this.agentRun());
+
+        // Manual Keyboard
+        document.getElementById('manual-send').addEventListener('click', () => this.manualType());
+        document.getElementById('manual-text').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); this.manualType(); }
+        });
+        document.querySelectorAll('.manual-key').forEach(btn => {
+            btn.addEventListener('click', () => this.manualKey(btn.dataset.fn));
+        });
 
         // Settings
         document.getElementById('settings-btn').addEventListener('click', () => this.openModal());

@@ -117,6 +117,15 @@ class AIAgentRequest(BaseModel):
     max_steps: int = 10
 
 
+class ManualTypeRequest(BaseModel):
+    text: str
+
+
+class ManualKeyRequest(BaseModel):
+    key: Optional[str] = None
+    fn_key: Optional[str] = None
+
+
 class RawCommand(BaseModel):
     fun: str
     data: Optional[dict] = None
@@ -278,6 +287,30 @@ async def generate_comments(device_id: str, request: GenerateCommentRequest):
         raise HTTPException(status_code=400, detail="Anthropic API key not configured")
     comments = await controller.generate_comment_options(device_id, count=request.count)
     return {"comments": comments}
+
+
+# ---------------------------------------------------- manual keyboard input ---
+@app.post("/api/devices/{device_id}/type")
+async def manual_type(device_id: str, request: ManualTypeRequest):
+    """Type text into the phone's currently focused field, from the PC.
+
+    Lets you type manually while the board stays connected, working around iOS
+    hiding the on-screen keyboard when a hardware keyboard is attached. ASCII
+    goes via /key/sendkey; non-ASCII via clipboard paste (with ASCII fallback).
+    """
+    return _result(await controller.enter_text(device_id, request.text))
+
+
+@app.post("/api/devices/{device_id}/key")
+async def manual_key(device_id: str, request: ManualKeyRequest):
+    """Send a single key or hotkey (e.g. fn_key='ENTER' / 'BACKSPACE')."""
+    if not request.key and not request.fn_key:
+        raise HTTPException(status_code=400, detail="Provide 'key' or 'fn_key'")
+    try:
+        await client.send_key(device_id, key=request.key, fn_key=request.fn_key)
+        return {"success": True, "message": "sent"}
+    except IMouseError as exc:
+        return {"success": False, "message": str(exc)}
 
 
 # --------------------------------------------------------------- AI agent -----

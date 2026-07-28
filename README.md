@@ -92,6 +92,8 @@ console is reachable and see discovered devices.
 - `POST /api/devices/{id}/generate-comments` — draft options
 - `POST /api/devices/{id}/ai/step` — one Claude perceive→decide→act cycle
 - `POST /api/devices/{id}/ai/run` — autonomous agent loop (`goal`, `max_steps`)
+- `POST /api/devices/{id}/type` — type text from the PC into the focused field
+- `POST /api/devices/{id}/key` — send a key/hotkey (`fn_key`: `ENTER`, `BACKSPACE`, …)
 - `POST /api/batch/action` — one action across many devices
 - `POST /api/devices/{id}/auto-browse` — randomised engagement session
 - `GET  /api/debug/connection` · `POST /api/debug/raw-command`
