@@ -52,28 +52,17 @@ TOOLS: list[dict] = [
         "input_schema": {"type": "object", "properties": {}},
     },
     {
-        "name": "follow",
-        "description": "Follow the creator of the current video.",
+        "name": "repost",
+        "description": "Repost the current video (via the share sheet). Use for something you'd want to share on.",
         "input_schema": {"type": "object", "properties": {}},
     },
     {
         "name": "comment",
-        "description": "Post a short, genuine, relevant comment on the current video.",
+        "description": "Post a short, genuine, relevant comment on the current video. This handles opening the comment box, typing, posting, and closing it -- you do not tap anything yourself.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "text": {"type": "string", "description": "The comment text to post."}
-            },
-            "required": ["text"],
-        },
-    },
-    {
-        "name": "tap_text",
-        "description": "Tap an on-screen UI element identified by its visible text (matched against the OCR element list). Use for buttons/links the other tools don't cover.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "text": {"type": "string", "description": "Visible text of the element to tap."}
             },
             "required": ["text"],
         },
@@ -93,17 +82,27 @@ TOOLS: list[dict] = [
 DEFAULT_GOAL = (
     "Browse TikTok like a real, curious human. For each video: read what it's "
     "about, like it if it's genuinely good, occasionally leave a short relevant "
-    "comment, follow a creator you really like, then move to the next video. "
-    "Don't like or comment on everything -- be selective and natural."
+    "comment or save/repost something you really love, then move to the next "
+    "video. Don't engage with everything -- be selective and natural."
 )
 
 SYSTEM_PROMPT = (
-    "You are operating a real iPhone running the TikTok app, one action at a "
-    "time. You see the current screen as an image plus a list of on-screen text "
-    "elements detected by OCR. Decide the single best next action and call "
-    "exactly one tool. Only text present in the OCR list can be tapped with "
-    "tap_text. Behave like a genuine human user, not a bot: be selective, vary "
-    "your actions, and keep any comments short, specific, and authentic."
+    "You are operating a real iPhone running the TikTok For You feed, one action "
+    "at a time. You see the current screen as an image plus a list of on-screen "
+    "text detected by OCR. Use both to understand exactly what is on screen "
+    "right now, then call exactly one tool.\n\n"
+    "You may ONLY perform these actions: swipe_next, swipe_previous, like, save, "
+    "repost, comment, or stop. There is no other action. Never open the camera "
+    "or any create/record/post-a-video screen, never tap arbitrary buttons, "
+    "dialogs, or keyboard keys -- you have no tool for that, so simply choose "
+    "one of the allowed actions instead. If the screen shows a keyboard, a "
+    "comment box, a share sheet, a login/permission dialog, or anything other "
+    "than a normal playing video, do NOT try to interact with it -- use "
+    "swipe_next to get back to browsing.\n\n"
+    "The comment action is self-contained: it opens the box, types, posts, and "
+    "closes it for you. Behave like a genuine, selective human: don't like or "
+    "comment on everything, vary your actions, and keep comments short, "
+    "specific, and authentic."
 )
 
 
@@ -151,17 +150,16 @@ class TikTokAgent:
 
         elements = perception.get("elements", [])
         if elements:
-            elements_text = "On-screen text elements (tappable via tap_text):\n" + "\n".join(
+            elements_text = "Text currently on screen (OCR) -- use it to understand what's showing:\n" + "\n".join(
                 f"- {e['text']}" for e in elements
             )
         elif perception.get("ocr_available"):
-            elements_text = "No text detected on screen."
+            elements_text = "No text detected on screen (likely a plain video)."
         else:
             elements_text = (
                 "OCR is unavailable ("
                 + perception.get("ocr_error", "unknown")
-                + "), so read text from the image and rely on like/comment/"
-                "swipe/follow rather than tap_text."
+                + "); read any text from the image instead."
             )
 
         history_text = (
@@ -217,18 +215,13 @@ class TikTokAgent:
             return await c.like_video(device_id)
         if name == "save":
             return await c.save_video(device_id)
-        if name == "follow":
-            return await c.follow_creator(device_id)
+        if name == "repost":
+            return await c.repost_video(device_id)
         if name == "comment":
             text = args.get("text", "")
             if not text:
                 return ActionResult.fail("comment called without text")
             return await c.comment_on_video(device_id, comment=text, use_ai=False)
-        if name == "tap_text":
-            text = args.get("text", "")
-            if text and await c._tap_text(device_id, [text]):
-                return ActionResult.ok(f"Tapped '{text}'")
-            return ActionResult.fail(f"No tappable element matched '{text}'")
         if name == "stop":
             return ActionResult.ok(f"Stopped: {args.get('reason', '')}")
         return ActionResult.fail(f"Unknown action: {name}")

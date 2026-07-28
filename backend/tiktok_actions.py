@@ -169,7 +169,24 @@ class TikTokController:
         # The Save/Favorites entry carries a text label -- find it.
         if await self._tap_text(device_id, ["Save", "Favorites", "Add to Favorites"]):
             return ActionResult.ok("Saved video")
+        await self._dismiss(device_id)
         return ActionResult.fail("Save option not found (share menu text not matched)")
+
+    async def repost_video(self, device_id: str) -> ActionResult:
+        """Open the share sheet and tap the Repost entry (located by text)."""
+        device = await self.get_device(device_id)
+        if not device:
+            return ActionResult.fail("Device not found")
+
+        x, y = await self._coords(device, "share_button")
+        if not (await self._click(device_id, x, y)).success:
+            return ActionResult.fail("Could not open share menu")
+        await asyncio.sleep(self.config.action_delay)
+
+        if await self._tap_text(device_id, ["Repost", "Re-post"]):
+            return ActionResult.ok("Reposted video")
+        await self._dismiss(device_id)
+        return ActionResult.fail("Repost option not found (share menu text not matched)")
 
     async def follow_creator(self, device_id: str) -> ActionResult:
         if await self._tap_text(device_id, ["Follow"]):
@@ -201,6 +218,23 @@ class TikTokController:
                 return True
         return False
 
+    async def _dismiss(self, device_id: str) -> None:
+        """Best-effort: close an open comment/share sheet or keyboard.
+
+        Tapping the video area above any sheet returns TikTok to the feed and
+        drops the keyboard, so the next agent step starts from a clean screen.
+        Used on every comment/save/repost exit path so the agent never gets
+        stuck in a dialog with no way back.
+        """
+        device = await self.get_device(device_id)
+        if device:
+            x, y = device.to_pixels(0.5, 0.12)
+            try:
+                await self.api.click(device_id, x, y)
+            except IMouseError:
+                pass
+        await asyncio.sleep(self.config.action_delay)
+
     async def open_comments(self, device_id: str) -> ActionResult:
         device = await self.get_device(device_id)
         if not device:
@@ -215,8 +249,9 @@ class TikTokController:
         paste flow (set clipboard -> brief pause -> WIN+v) so emoji and accented
         characters survive.
         """
+        ascii_only = all(ord(c) < 128 for c in text)
         try:
-            if all(ord(c) < 128 for c in text):
+            if ascii_only:
                 await self.api.send_key(device_id, key=text)
             else:
                 await self.api.clipboard_set(device_id, text)
@@ -224,6 +259,16 @@ class TikTokController:
                 await self.api.send_key(device_id, fn_key="WIN+v")
             return ActionResult.ok("Text entered")
         except IMouseError as exc:
+            # The clipboard/paste bridge failed (e.g. transport error). Fall back
+            # to the ASCII subset via /key/sendkey so the comment still posts
+            # (emoji and accented characters are dropped).
+            fallback = "".join(c for c in text if ord(c) < 128).strip()
+            if not ascii_only and fallback:
+                try:
+                    await self.api.send_key(device_id, key=fallback)
+                    return ActionResult.ok("Text entered (non-ASCII dropped)")
+                except IMouseError:
+                    pass
             return ActionResult.fail(str(exc))
 
     async def comment_on_video(
@@ -257,17 +302,27 @@ class TikTokController:
 
         entered = await self.enter_text(device_id, comment)
         if not entered.success:
+            # Never leave the keyboard/comment sheet open -- return to the feed.
+            await self._dismiss(device_id)
             return ActionResult.fail(f"Could not enter comment: {entered.message}")
         await asyncio.sleep(self.config.paste_delay)
 
         # Post: prefer the labelled Send/Post button, else Enter.
-        if not await self._tap_text(device_id, ["Post", "Send"]):
+        posted = await self._tap_text(device_id, ["Post", "Send"])
+        if not posted:
             try:
                 await self.api.send_key(device_id, fn_key="ENTER")
-            except IMouseError as exc:
-                return ActionResult.fail(f"Could not post comment: {exc}")
+                posted = True
+            except IMouseError:
+                posted = False
 
-        return ActionResult.ok("Comment posted", comment=comment)
+        # Always dismiss the comment sheet so the next step starts clean.
+        await asyncio.sleep(self.config.action_delay)
+        await self._dismiss(device_id)
+
+        if posted:
+            return ActionResult.ok("Comment posted", comment=comment)
+        return ActionResult.fail("Could not post comment")
 
     async def generate_comment_options(self, device_id: str, count: int = 3) -> list[str]:
         context = await self.analyze_current_video(device_id)
