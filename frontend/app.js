@@ -502,7 +502,37 @@ class TikTokController {
         }
     }
 
+    copyCampaignLog() {
+        const s = this._lastCampaign;
+        if (!s || !(s.recent || []).length) {
+            this.showToast('No campaign activity yet', 'warning');
+            return;
+        }
+        const st = s.stats || {};
+        const mins = (sec) => `${Math.floor((sec || 0) / 60)}m ${Math.round((sec || 0) % 60)}s`;
+        const header = `NutriSkin campaign — ${mins(s.elapsed)} elapsed · ` +
+            `videos ${st.videos || 0}, relevant ${st.relevant || 0}, likes ${st.likes || 0}, ` +
+            `saves ${st.saves || 0}, comments ${st.comments || 0}, recovered ${st.recovered || 0}, ` +
+            `errors ${st.errors || 0}`;
+        const lines = s.recent.map(e => {
+            const tag = e.on_feed === false ? 'OFF-FEED'
+                : (e.relevant === true ? 'RELEVANT' : (e.relevant === false ? 'skip' : 'error'));
+            const acts = (e.actions || []).length ? ` [${e.actions.join(', ')}]` : '';
+            const w = e.watch ? ` (${e.watch}s)` : '';
+            let line = `- ${tag}${acts}${w}`;
+            if (e.screen) line += ` | screen: ${e.screen}`;
+            if (e.reason) line += ` | reason: ${e.reason}`;
+            if (e.comment) line += ` | comment: ${e.comment}`;
+            return line;
+        });
+        const text = header + '\n' + lines.join('\n');
+        navigator.clipboard.writeText(text)
+            .then(() => this.showToast('Log copied — paste it in chat', 'success'))
+            .catch(() => this.showToast('Copy failed (clipboard blocked)', 'error'));
+    }
+
     renderCampaign(s) {
+        this._lastCampaign = s;
         const startBtn = document.getElementById('campaign-start');
         const stopBtn = document.getElementById('campaign-stop');
         startBtn.style.display = s.running ? 'none' : '';
@@ -705,6 +735,7 @@ class TikTokController {
         // NutriSkin Campaign
         document.getElementById('campaign-start').addEventListener('click', () => this.startCampaign());
         document.getElementById('campaign-stop').addEventListener('click', () => this.stopCampaign());
+        document.getElementById('campaign-copy').addEventListener('click', () => this.copyCampaignLog());
 
         // Manual Keyboard
         document.getElementById('manual-send').addEventListener('click', () => this.manualType());

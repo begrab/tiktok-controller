@@ -188,25 +188,45 @@ class TikTokController:
         await self._dismiss(device_id)
         return ActionResult.fail("Repost option not found (share menu text not matched)")
 
-    async def return_to_feed(self, device_id: str) -> ActionResult:
-        """Recover to the For You feed from anywhere (profile, sheet, search).
+    async def return_to_feed(self, device_id: str, attempt: int = 0) -> ActionResult:
+        """Recover to the For You feed from anywhere (search, profile, sheet).
 
-        Closes any open sheet/dialog with Back, then taps the Home tab so the
-        agent can't get stuck deep in the UI (e.g. a profile's Reposts grid).
+        Many stuck screens (e.g. TikTok's "find similar content" search view)
+        have NO bottom tab bar, so tapping Home does nothing -- the way out is
+        the top-left back arrow. We tap that first, then press hardware Back, and
+        escalate to the Home tab and a swipe-down only after repeated failures.
+        ``attempt`` is the consecutive off-feed count, used to escalate.
         """
         device = await self.get_device(device_id)
         if not device:
             return ActionResult.fail("Device not found")
+
+        # 1) Universal top-left back arrow (search / profile / detail screens).
+        bx, by = await self._coords(device, "back_arrow")
+        await self._click(device_id, bx, by)
+        await asyncio.sleep(self.config.action_delay)
+
+        # 2) Hardware Back, in case the tap missed.
         try:
-            await self.api.send_key(device_id, fn_key="TAB+b")  # close any modal
+            await self.api.send_key(device_id, fn_key="TAB+b")
         except IMouseError:
             pass
         await asyncio.sleep(self.config.action_delay)
-        x, y = await self._coords(device, "home_tab")
-        result = await self._click(device_id, x, y)
-        await asyncio.sleep(self.config.action_delay)
-        result.message = "Returned to feed" if result.success else result.message
-        return result
+
+        # 3) Still stuck after a couple of tries: try the Home tab...
+        if attempt >= 2:
+            hx, hy = await self._coords(device, "home_tab")
+            await self._click(device_id, hx, hy)
+            await asyncio.sleep(self.config.action_delay)
+        # 4) ...and then a downward swipe, which dismisses many sheets.
+        if attempt >= 4:
+            try:
+                await self.api.swipe(device_id, "down", 0.4)
+            except IMouseError:
+                pass
+            await asyncio.sleep(self.config.action_delay)
+
+        return ActionResult.ok("Return-to-feed attempted")
 
     async def follow_creator(self, device_id: str) -> ActionResult:
         if await self._tap_text(device_id, ["Follow"]):

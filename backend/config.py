@@ -61,8 +61,10 @@ class Config:
             "video_center": {"x": 0.5, "y": 0.5},
             "comment_input": {"x": 0.5, "y": 0.95},
             "caption_area": {"x": 0.03, "y": 0.72, "w": 0.75, "h": 0.18},
-            # Home tab (bottom-left of TikTok's tab bar) -- used to recover to
-            # the For You feed from anywhere. Calibrate if taps miss.
+            # Recovery anchors. back_arrow is the universal top-left "go back"
+            # button on search/profile/detail screens; home_tab is the Home tab
+            # on the bottom bar. Calibrate if taps miss.
+            "back_arrow": {"x": 0.05, "y": 0.055},
             "home_tab": {"x": 0.1, "y": 0.97},
         }
     )

@@ -139,6 +139,7 @@ class TikTokAgent:
             "log": [],
             "used_comments": [],
             "last_screenshot": None,   # b64 of the most recent frame, for the UI
+            "off_feed_streak": 0,      # consecutive off-feed cycles (escalates recovery)
         }
 
     # --------------------------------------------------------- perceive ------
@@ -481,11 +482,14 @@ class TikTokAgent:
         # Off the feed (profile, sheet, search, …): recover, don't engage.
         if not plan["on_feed"]:
             st["stats"]["recovered"] += 1
-            await self.controller.return_to_feed(device_id)
+            st["off_feed_streak"] += 1
+            await self.controller.return_to_feed(device_id, attempt=st["off_feed_streak"] - 1)
             await self._sleep(self._rand(1.5, 3.0))
             return {"on_feed": False, "screen": plan["screen"], "relevant": None,
-                    "reason": plan["reason"], "actions": ["return_to_feed"], "watch": 0}
+                    "reason": plan["reason"],
+                    "actions": [f"return_to_feed (try {st['off_feed_streak']})"], "watch": 0}
 
+        st["off_feed_streak"] = 0
         st["stats"]["videos"] += 1
 
         if not plan["relevant"]:
