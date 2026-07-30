@@ -60,6 +60,11 @@ TOOLS: list[dict] = [
         "input_schema": {"type": "object", "properties": {}},
     },
     {
+        "name": "return_to_feed",
+        "description": "Go back to the main For You feed by tapping Home. Use this whenever the screen is NOT a normal playing For You video -- a profile page, comments, share sheet, search, DMs, or any menu -- instead of trying to interact with it.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "comment",
         "description": "Post a short, genuine, relevant comment on the current video. This handles opening the comment box, typing, posting, and closing it -- you do not tap anything yourself.",
         "input_schema": {
@@ -95,13 +100,15 @@ SYSTEM_PROMPT = (
     "text detected by OCR. Use both to understand exactly what is on screen "
     "right now, then call exactly one tool.\n\n"
     "You may ONLY perform these actions: swipe_next, swipe_previous, like, save, "
-    "repost, comment, or stop. There is no other action. Never open the camera "
-    "or any create/record/post-a-video screen, never tap arbitrary buttons, "
-    "dialogs, or keyboard keys -- you have no tool for that, so simply choose "
-    "one of the allowed actions instead. If the screen shows a keyboard, a "
-    "comment box, a share sheet, a login/permission dialog, or anything other "
-    "than a normal playing video, do NOT try to interact with it -- use "
-    "swipe_next to get back to browsing.\n\n"
+    "repost, comment, return_to_feed, or stop. There is no other action. Never "
+    "open the camera or any create/record/post-a-video screen, and never tap "
+    "arbitrary buttons.\n\n"
+    "Before acting, check what screen you're on. like/save/repost/comment are "
+    "ONLY valid on a normal, full-screen For You video that's playing. If you "
+    "see a profile page (avatar, follower counts, a grid of videos, tabs like "
+    "Videos/Reposts/Liked), an open comment or share sheet, search, DMs, "
+    "settings, an ad, or a login/permission dialog, do NOT try to interact with "
+    "it -- call return_to_feed to get back to browsing.\n\n"
     "The comment action is self-contained: it opens the box, types, posts, and "
     "closes it for you. Behave like a genuine, selective human: don't like or "
     "comment on everything, vary your actions, and keep comments short, "
@@ -125,9 +132,13 @@ class TikTokAgent:
             "device_id": None,
             "duration": 0,
             "elapsed": 0.0,
-            "stats": {"videos": 0, "relevant": 0, "likes": 0, "saves": 0, "comments": 0, "errors": 0},
+            "stats": {
+                "videos": 0, "relevant": 0, "likes": 0, "saves": 0,
+                "comments": 0, "recovered": 0, "errors": 0,
+            },
             "log": [],
             "used_comments": [],
+            "last_screenshot": None,   # b64 of the most recent frame, for the UI
         }
 
     # --------------------------------------------------------- perceive ------
@@ -234,6 +245,8 @@ class TikTokAgent:
             return await c.save_video(device_id)
         if name == "repost":
             return await c.repost_video(device_id)
+        if name == "return_to_feed":
+            return await c.return_to_feed(device_id)
         if name == "comment":
             text = args.get("text", "")
             if not text:
@@ -300,20 +313,28 @@ class TikTokAgent:
                 "input_schema": {
                     "type": "object",
                     "properties": {
+                        "on_feed": {
+                            "type": "boolean",
+                            "description": "True ONLY if this is a normal, full-screen For You video that's playing. False for a profile page, comments, share sheet, search, DMs, settings, an ad/sponsor screen, a login prompt, or anything else.",
+                        },
+                        "screen": {
+                            "type": "string",
+                            "description": "A short plain-language description of what is actually on screen right now (e.g. 'For You video about baking', 'profile page of @user, Reposts tab', 'comment sheet open').",
+                        },
                         "relevant": {
                             "type": "boolean",
-                            "description": "True only if the video's topic genuinely relates to the niche.",
+                            "description": "Only meaningful when on_feed is true: is the video's topic relevant to the niche?",
                         },
                         "reason": {
                             "type": "string",
-                            "description": "A few words on why it is or isn't relevant.",
+                            "description": "A few words on the relevance decision.",
                         },
                         "comment": {
                             "type": "string",
-                            "description": "If relevant, a fresh, human, personal-experience comment tailored to THIS video that subtly promotes the product. Leave empty if not relevant.",
+                            "description": "If on_feed and relevant, a fresh, human, personal-experience comment tailored to THIS video that subtly promotes the product. Leave empty otherwise.",
                         },
                     },
-                    "required": ["relevant", "reason"],
+                    "required": ["on_feed", "screen", "relevant", "reason"],
                 },
             }
         ]
@@ -321,6 +342,15 @@ class TikTokAgent:
     def _plan_system(self, used_comments: list[str]) -> str:
         parts = [
             f"You are curating a TikTok For You feed for the {NICHE['name']} niche.",
+            "\nFIRST, look at the screen and set on_feed. The For You feed is a "
+            "single full-screen video playing, with the action icons (like, "
+            "comment, share) stacked on the right and a caption bottom-left. If "
+            "you instead see a profile page (avatar + follower counts + a grid of "
+            "videos, tabs like Videos/Reposts/Liked), an open comment or share "
+            "sheet, search, DMs, settings, an ad, or a login prompt, set on_feed "
+            "to FALSE -- we'll navigate back to the feed and you should NOT judge "
+            "relevance or write a comment for those screens. Always fill in "
+            "'screen' with what you actually see.",
             f"\n{NICHE['name']} is: {NICHE['description']}",
             "\nA video is RELEVANT if it relates to any of: "
             + "; ".join(NICHE["relevant_topics"])
@@ -385,11 +415,13 @@ class TikTokAgent:
             if block.type == "tool_use":
                 data = dict(block.input or {})
                 return {
+                    "on_feed": bool(data.get("on_feed")),
+                    "screen": (data.get("screen") or "").strip(),
                     "relevant": bool(data.get("relevant")),
                     "reason": data.get("reason", ""),
                     "comment": (data.get("comment") or "").strip(),
                 }
-        return {"relevant": False, "reason": "no plan returned", "comment": ""}
+        return {"on_feed": False, "screen": "unknown", "relevant": False, "reason": "no plan returned", "comment": ""}
 
     # ------------------------------------------------ human-like timing ------
     def _rand(self, lo: float, hi: float) -> float:
@@ -431,17 +463,28 @@ class TikTokAgent:
         c = self.config.campaign
 
         perception = await self.perceive(device_id)
+        st["last_screenshot"] = perception.get("screenshot_b64")  # live view for UI
         if perception.get("error"):
             st["stats"]["errors"] += 1
             await self._sleep(2.0)
-            return {"relevant": None, "reason": perception["error"], "actions": [], "watch": 0}
+            return {"on_feed": None, "screen": "screenshot failed", "relevant": None,
+                    "reason": perception["error"], "actions": [], "watch": 0}
 
         try:
             plan = await self.plan_video(perception, st["used_comments"][-6:])
         except Exception as exc:  # noqa: BLE001
             st["stats"]["errors"] += 1
             await self._sleep(2.0)
-            return {"relevant": None, "reason": f"plan failed: {exc}", "actions": [], "watch": 0}
+            return {"on_feed": None, "screen": "plan failed", "relevant": None,
+                    "reason": f"plan failed: {exc}", "actions": [], "watch": 0}
+
+        # Off the feed (profile, sheet, search, …): recover, don't engage.
+        if not plan["on_feed"]:
+            st["stats"]["recovered"] += 1
+            await self.controller.return_to_feed(device_id)
+            await self._sleep(self._rand(1.5, 3.0))
+            return {"on_feed": False, "screen": plan["screen"], "relevant": None,
+                    "reason": plan["reason"], "actions": ["return_to_feed"], "watch": 0}
 
         st["stats"]["videos"] += 1
 
@@ -449,7 +492,8 @@ class TikTokAgent:
             watch = self._watch_irrelevant()
             await self._sleep(watch)
             await self.controller.swipe_next(device_id)
-            return {"relevant": False, "reason": plan["reason"], "actions": [], "watch": round(watch, 1)}
+            return {"on_feed": True, "screen": plan["screen"], "relevant": False,
+                    "reason": plan["reason"], "actions": [], "watch": round(watch, 1)}
 
         # Relevant: watch part of the time, engage, linger, then move on.
         st["stats"]["relevant"] += 1
@@ -481,6 +525,8 @@ class TikTokAgent:
         await self._sleep(self._watch_relevant_remainder(watch))
         await self.controller.swipe_next(device_id)
         return {
+            "on_feed": True,
+            "screen": plan["screen"],
             "relevant": True,
             "reason": plan["reason"],
             "actions": done,
@@ -525,4 +571,5 @@ class TikTokAgent:
             "remaining": round(remaining, 1),
             "stats": dict(st["stats"]),
             "recent": st["log"][-40:],
+            "last_screenshot": st.get("last_screenshot"),
         }

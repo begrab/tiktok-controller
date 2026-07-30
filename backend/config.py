@@ -61,6 +61,9 @@ class Config:
             "video_center": {"x": 0.5, "y": 0.5},
             "comment_input": {"x": 0.5, "y": 0.95},
             "caption_area": {"x": 0.03, "y": 0.72, "w": 0.75, "h": 0.18},
+            # Home tab (bottom-left of TikTok's tab bar) -- used to recover to
+            # the For You feed from anywhere. Calibrate if taps miss.
+            "home_tab": {"x": 0.1, "y": 0.97},
         }
     )
 

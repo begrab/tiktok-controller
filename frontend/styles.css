@@ -733,3 +733,36 @@ select:focus, input:focus {
 .campaign-status .running { color: var(--success); font-weight: 600; }
 .campaign-meta { color: var(--text-secondary); font-size: 0.85em; }
 .agent-step.skip { border-left-color: var(--border); opacity: 0.8; }
+
+/* Campaign live view: snapshot + log side by side */
+.campaign-live {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+}
+.campaign-snapshot {
+    flex: 0 0 auto;
+    width: 150px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    min-height: 100px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.campaign-snapshot img { width: 100%; display: block; }
+.campaign-live .agent-log { flex: 1; max-height: 380px; }
+.campaign-screen {
+    display: block;
+    color: var(--success);
+    font-size: 0.82em;
+    margin-top: 2px;
+}
+.agent-step.offfeed { border-left-color: var(--warning); }
+.agent-step.offfeed .campaign-screen { color: var(--warning); }
+@media (max-width: 640px) {
+    .campaign-live { flex-direction: column; }
+    .campaign-snapshot { width: 100%; max-width: 220px; }
+}

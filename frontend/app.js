@@ -515,19 +515,32 @@ class TikTokController {
               `· ${mins(s.elapsed || 0)} elapsed` + (s.running ? ` / ${mins(s.remaining || 0)} left` : '') +
               ` · videos ${st.videos || 0} · relevant ${st.relevant || 0} · ` +
               `likes ${st.likes || 0} · saves ${st.saves || 0} · comments ${st.comments || 0}` +
+              (st.recovered ? ` · recovered ${st.recovered}` : '') +
               (st.errors ? ` · errors ${st.errors}` : '')
             : '';
+
+        // Live snapshot of what the agent actually saw on its last cycle.
+        const snap = document.getElementById('campaign-snapshot');
+        if (s.last_screenshot) {
+            snap.innerHTML = `<img src="data:image/jpeg;base64,${s.last_screenshot}" alt="agent view">`;
+        }
 
         const log = document.getElementById('campaign-log');
         if ((s.recent || []).length) {
             log.innerHTML = s.recent.slice().reverse().map(e => {
-                const cls = e.relevant === true ? 'ok' : (e.relevant === false ? 'skip' : 'fail');
-                const tag = e.relevant === true ? 'RELEVANT' : (e.relevant === false ? 'skip' : 'error');
+                let cls, tag;
+                if (e.on_feed === false) { cls = 'offfeed'; tag = 'OFF-FEED'; }
+                else if (e.relevant === true) { cls = 'ok'; tag = 'RELEVANT'; }
+                else if (e.relevant === false) { cls = 'skip'; tag = 'skip'; }
+                else { cls = 'fail'; tag = 'error'; }
                 const acts = (e.actions || []).length ? ` [${e.actions.join(', ')}]` : '';
+                const meta = e.watch ? ` <span class="campaign-meta">(${e.watch}s)</span>` : '';
+                // Show what was ACTUALLY on screen, per Claude, next to the action.
+                const screen = e.screen ? `<span class="campaign-screen">screen: ${this.escapeHtml(e.screen)}</span>` : '';
                 const cmt = e.comment ? `<span class="agent-msg">💬 ${this.escapeHtml(e.comment)}</span>` : '';
-                return `<div class="agent-step ${cls}"><strong>${tag}</strong>${acts} ` +
-                    `<span class="campaign-meta">(${e.watch || 0}s)</span> ` +
-                    `<span class="agent-msg">${this.escapeHtml(e.reason || '')}</span>${cmt}</div>`;
+                const reason = e.reason ? `<span class="agent-msg">${this.escapeHtml(e.reason)}</span>` : '';
+                return `<div class="agent-step ${cls}"><strong>${tag}</strong>${acts}${meta} ` +
+                    `${screen}${reason}${cmt}</div>`;
             }).join('');
         }
     }

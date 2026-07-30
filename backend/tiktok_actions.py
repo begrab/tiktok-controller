@@ -188,6 +188,26 @@ class TikTokController:
         await self._dismiss(device_id)
         return ActionResult.fail("Repost option not found (share menu text not matched)")
 
+    async def return_to_feed(self, device_id: str) -> ActionResult:
+        """Recover to the For You feed from anywhere (profile, sheet, search).
+
+        Closes any open sheet/dialog with Back, then taps the Home tab so the
+        agent can't get stuck deep in the UI (e.g. a profile's Reposts grid).
+        """
+        device = await self.get_device(device_id)
+        if not device:
+            return ActionResult.fail("Device not found")
+        try:
+            await self.api.send_key(device_id, fn_key="TAB+b")  # close any modal
+        except IMouseError:
+            pass
+        await asyncio.sleep(self.config.action_delay)
+        x, y = await self._coords(device, "home_tab")
+        result = await self._click(device_id, x, y)
+        await asyncio.sleep(self.config.action_delay)
+        result.message = "Returned to feed" if result.success else result.message
+        return result
+
     async def follow_creator(self, device_id: str) -> ActionResult:
         if await self._tap_text(device_id, ["Follow"]):
             return ActionResult.ok("Followed creator")
