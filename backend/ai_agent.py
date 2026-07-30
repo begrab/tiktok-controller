@@ -319,7 +319,7 @@ class TikTokAgent:
                     "properties": {
                         "on_feed": {
                             "type": "boolean",
-                            "description": "True ONLY if this is a normal, full-screen For You video that's playing. False for a profile page, comments, share sheet, search, DMs, settings, an ad/sponsor screen, a login prompt, or anything else.",
+                            "description": "TRUE whenever a single full-screen vertical video is PLAYING with the like/comment/share icons on the right -- a video you could swipe up to skip -- REGARDLESS of its topic, and whether it's the For You ('Für dich') or Following ('Gefolgt') tab. FALSE only when it is clearly NOT a playing video: a search box or grid of thumbnails, a profile page, an open comment/share sheet, the inbox/DMs, settings, or a menu/dialog. Do NOT set false just because the video is off-topic.",
                         },
                         "screen": {
                             "type": "string",
@@ -327,7 +327,7 @@ class TikTokAgent:
                         },
                         "relevant": {
                             "type": "boolean",
-                            "description": "Only meaningful when on_feed is true: is the video's topic relevant to the niche?",
+                            "description": "Only when on_feed: is the video's TOPIC relevant to the niche? An off-topic playing video is on_feed=true, relevant=false (we'll swipe past it).",
                         },
                         "reason": {
                             "type": "string",
@@ -346,15 +346,23 @@ class TikTokAgent:
     def _plan_system(self, used_comments: list[str]) -> str:
         parts = [
             f"You are curating a TikTok For You feed for the {NICHE['name']} niche.",
-            "\nFIRST, look at the screen and set on_feed. The For You feed is a "
-            "single full-screen video playing, with the action icons (like, "
-            "comment, share) stacked on the right and a caption bottom-left. If "
-            "you instead see a profile page (avatar + follower counts + a grid of "
-            "videos, tabs like Videos/Reposts/Liked), an open comment or share "
-            "sheet, search, DMs, settings, an ad, or a login prompt, set on_feed "
-            "to FALSE -- we'll navigate back to the feed and you should NOT judge "
-            "relevance or write a comment for those screens. Always fill in "
-            "'screen' with what you actually see.",
+            "\nFIRST, decide on_feed. Set on_feed=TRUE whenever a single "
+            "full-screen vertical video is PLAYING with the like/comment/share "
+            "icons stacked on the right -- a video you could swipe up to skip. "
+            "This is TRUE for both the 'Für dich' (For You) and 'Gefolgt' "
+            "(Following) tabs, and TRUE no matter what the video is about. Do NOT "
+            "set on_feed=false just because the video is off-topic -- that is what "
+            "'relevant' is for; an off-topic video is on_feed=TRUE with "
+            "relevant=FALSE and we will simply swipe past it.\n"
+            "Set on_feed=FALSE ONLY when it is clearly not a playing full-screen "
+            "video: a search box or a grid of video thumbnails (search results / "
+            "explore), a profile page (avatar + follower counts + a video grid), "
+            "an open comment or share sheet, the inbox/DMs, settings, a livestream "
+            "chat, or any menu/dialog. Note: a Follow button, a like/comment count, "
+            "and a @username appear on NORMAL feed videos too -- they do NOT mean "
+            "it's a profile page. A profile page specifically shows a GRID of video "
+            "thumbnails and tabs like Videos/Reposts/Liked. Always fill in 'screen' "
+            "with what you see.",
             f"\n{NICHE['name']} is: {NICHE['description']}",
             "\nA video is RELEVANT if it relates to any of: "
             + "; ".join(NICHE["relevant_topics"])
