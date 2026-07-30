@@ -189,44 +189,27 @@ class TikTokController:
         return ActionResult.fail("Repost option not found (share menu text not matched)")
 
     async def return_to_feed(self, device_id: str, attempt: int = 0) -> ActionResult:
-        """Recover to the For You feed from anywhere (search, profile, sheet).
+        """Coordinate-free fallback recovery: hardware Back (+ swipe-down).
 
-        Many stuck screens (e.g. TikTok's "find similar content" search view)
-        have NO bottom tab bar, so tapping Home does nothing -- the way out is
-        the top-left back arrow. We tap that first, then press hardware Back, and
-        escalate to the Home tab and a swipe-down only after repeated failures.
-        ``attempt`` is the consecutive off-feed count, used to escalate.
+        Blind coordinate taps here proved dangerous (top-left = LIVE, wrong tab =
+        DMs), so the agent uses the vision-guided recovery in ai_agent instead.
+        This method stays as a safe, tap-free fallback for any other caller.
         """
         device = await self.get_device(device_id)
         if not device:
             return ActionResult.fail("Device not found")
-
-        # 1) Universal top-left back arrow (search / profile / detail screens).
-        bx, by = await self._coords(device, "back_arrow")
-        await self._click(device_id, bx, by)
-        await asyncio.sleep(self.config.action_delay)
-
-        # 2) Hardware Back, in case the tap missed.
         try:
             await self.api.send_key(device_id, fn_key="TAB+b")
         except IMouseError:
             pass
         await asyncio.sleep(self.config.action_delay)
-
-        # 3) Still stuck after a couple of tries: try the Home tab...
         if attempt >= 2:
-            hx, hy = await self._coords(device, "home_tab")
-            await self._click(device_id, hx, hy)
-            await asyncio.sleep(self.config.action_delay)
-        # 4) ...and then a downward swipe, which dismisses many sheets.
-        if attempt >= 4:
             try:
-                await self.api.swipe(device_id, "down", 0.4)
+                await self.api.swipe(device_id, "down", 0.5)
             except IMouseError:
                 pass
             await asyncio.sleep(self.config.action_delay)
-
-        return ActionResult.ok("Return-to-feed attempted")
+        return ActionResult.ok("Return-to-feed attempted (back)")
 
     async def follow_creator(self, device_id: str) -> ActionResult:
         if await self._tap_text(device_id, ["Follow"]):
@@ -261,18 +244,15 @@ class TikTokController:
     async def _dismiss(self, device_id: str) -> None:
         """Best-effort: close an open comment/share sheet or keyboard.
 
-        Tapping the video area above any sheet returns TikTok to the feed and
-        drops the keyboard, so the next agent step starts from a clean screen.
-        Used on every comment/save/repost exit path so the agent never gets
-        stuck in a dialog with no way back.
+        A downward swipe reliably dismisses TikTok's comment/share sheets without
+        the risk of a blind tap landing on a navigation control (LIVE, a tab,
+        etc.). Used on every comment/save/repost exit path so the agent never
+        gets stuck in a dialog with no way back.
         """
-        device = await self.get_device(device_id)
-        if device:
-            x, y = device.to_pixels(0.5, 0.12)
-            try:
-                await self.api.click(device_id, x, y)
-            except IMouseError:
-                pass
+        try:
+            await self.api.swipe(device_id, "down", 0.6)
+        except IMouseError:
+            pass
         await asyncio.sleep(self.config.action_delay)
 
     async def open_comments(self, device_id: str) -> ActionResult:

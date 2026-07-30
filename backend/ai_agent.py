@@ -247,7 +247,10 @@ class TikTokAgent:
         if name == "repost":
             return await c.repost_video(device_id)
         if name == "return_to_feed":
-            return await c.return_to_feed(device_id)
+            perc = await self.perceive(device_id)
+            move = await self.recover(device_id, perc)
+            await self.apply_recovery(device_id, move)
+            return ActionResult.ok(f"recover: {move.get('method')} — {move.get('note', '')}")
         if name == "comment":
             text = args.get("text", "")
             if not text:
@@ -424,6 +427,101 @@ class TikTokAgent:
                 }
         return {"on_feed": False, "screen": "unknown", "relevant": False, "reason": "no plan returned", "comment": ""}
 
+    # ------------------------------------------------ vision recovery --------
+    # Blind fixed-coordinate taps are dangerous (top-left = LIVE, wrong bottom
+    # tab = DMs/profile), so recovery is vision-guided: Claude looks at the stuck
+    # screen and picks ONE navigation control to escape toward the feed.
+
+    RECOVER_TOOL = [
+        {
+            "name": "recover",
+            "description": "Choose ONE action to move back toward the TikTok For You feed from the current (non-feed) screen.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "method": {
+                        "type": "string",
+                        "enum": ["tap", "hardware_back", "swipe_down"],
+                        "description": "tap = tap a specific navigation control (a top-left back arrow, an X/Close/Cancel button, or the Home/For-You tab in the bottom bar). hardware_back = press the phone's Back. swipe_down = pull down to dismiss an open comment/share sheet.",
+                    },
+                    "x": {"type": "integer", "description": "x pixel to tap (method=tap only), in the screenshot's pixel space."},
+                    "y": {"type": "integer", "description": "y pixel to tap (method=tap only)."},
+                    "note": {"type": "string", "description": "Briefly, what you are tapping or doing."},
+                },
+                "required": ["method", "note"],
+            },
+        }
+    ]
+
+    async def recover(self, device_id: str, perception: dict) -> dict:
+        """Ask Claude how to escape a non-feed screen toward the For You feed."""
+        client = self.controller.ai.client
+        device = await self.controller.get_device(device_id)
+        w = (device.imgw or device.width) if device else 0
+        h = (device.imgh or device.height) if device else 0
+
+        elements = perception.get("elements", [])
+        screen_text = (
+            "On-screen text elements as 'text @ [x,y]' (you can tap any of these "
+            "coordinates exactly):\n"
+            + "\n".join(f"- {e['text']} @ {e['centre']}" for e in elements)
+            if elements else "No OCR text; judge positions from the image."
+        )
+        system = (
+            "You are helping an automation get back to the TikTok For You feed (a "
+            f"single full-screen video with like/comment/share on the right). The "
+            f"screenshot is {w} pixels wide and {h} pixels tall. Look at the screen "
+            "and choose ONE action to move toward that feed.\n"
+            "- 'tap' a clear navigation control and give its pixel (x,y). If the "
+            "control has an OCR text entry above (e.g. Cancel/Abbrechen/Back), reuse "
+            "its exact [x,y]. Otherwise estimate from the image (e.g. a top-left "
+            "back arrow, an X/Close button, or the Home/For-You tab in the bottom "
+            "bar).\n"
+            "- 'swipe_down' to dismiss an open comment or share sheet.\n"
+            "- 'hardware_back' if there is no obvious control.\n"
+            "NEVER tap the LIVE button, a profile, a video, a link, a follow button, "
+            "or any content -- ONLY a back/close/navigation control. Call recover."
+        )
+        content: list[dict] = []
+        if perception.get("screenshot_b64"):
+            content.append(
+                {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": "image/jpeg", "data": perception["screenshot_b64"]},
+                }
+            )
+        content.append({"type": "text", "text": f"{screen_text}\n\nChoose the recovery action."})
+
+        try:
+            resp = await client.messages.create(
+                model=self.config.anthropic_model,
+                max_tokens=300,
+                system=system,
+                tools=self.RECOVER_TOOL,
+                tool_choice={"type": "tool", "name": "recover"},
+                messages=[{"role": "user", "content": content}],
+            )
+            for block in resp.content:
+                if block.type == "tool_use":
+                    return dict(block.input or {})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("recover decision failed: %s", exc)
+        return {"method": "hardware_back", "note": "fallback"}
+
+    async def apply_recovery(self, device_id: str, move: dict) -> None:
+        """Execute a recovery move chosen by :meth:`recover`."""
+        method = move.get("method")
+        try:
+            if method == "tap" and move.get("x") is not None and move.get("y") is not None:
+                await self.controller.api.click(device_id, int(move["x"]), int(move["y"]))
+            elif method == "swipe_down":
+                await self.controller.api.swipe(device_id, "down", 0.6)
+            else:  # hardware_back / fallback
+                await self.controller.api.send_key(device_id, fn_key="TAB+b")
+        except (IMouseError, ValueError, TypeError) as exc:
+            logger.warning("apply_recovery failed: %s", exc)
+        await asyncio.sleep(self.config.action_delay)
+
     # ------------------------------------------------ human-like timing ------
     def _rand(self, lo: float, hi: float) -> float:
         return random.uniform(lo, hi)
@@ -483,11 +581,20 @@ class TikTokAgent:
         if not plan["on_feed"]:
             st["stats"]["recovered"] += 1
             st["off_feed_streak"] += 1
-            await self.controller.return_to_feed(device_id, attempt=st["off_feed_streak"] - 1)
+            move = await self.recover(device_id, perception)
+            await self.apply_recovery(device_id, move)
             await self._sleep(self._rand(1.5, 3.0))
-            return {"on_feed": False, "screen": plan["screen"], "relevant": None,
-                    "reason": plan["reason"],
-                    "actions": [f"return_to_feed (try {st['off_feed_streak']})"], "watch": 0}
+            entry = {
+                "on_feed": False, "screen": plan["screen"], "relevant": None,
+                "reason": plan["reason"],
+                "actions": [f"recover:{move.get('method', '?')} (try {st['off_feed_streak']})"],
+                "recovery": move.get("note", ""), "watch": 0,
+            }
+            # Safety net: never spiral unsupervised. Stop after too many failures.
+            if st["off_feed_streak"] >= 12:
+                st["stop"] = True
+                entry["actions"].append("STOPPED (stuck off-feed)")
+            return entry
 
         st["off_feed_streak"] = 0
         st["stats"]["videos"] += 1

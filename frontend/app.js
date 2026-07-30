@@ -521,6 +521,7 @@ class TikTokController {
             const w = e.watch ? ` (${e.watch}s)` : '';
             let line = `- ${tag}${acts}${w}`;
             if (e.screen) line += ` | screen: ${e.screen}`;
+            if (e.recovery) line += ` | recover: ${e.recovery}`;
             if (e.reason) line += ` | reason: ${e.reason}`;
             if (e.comment) line += ` | comment: ${e.comment}`;
             return line;
@@ -567,10 +568,11 @@ class TikTokController {
                 const meta = e.watch ? ` <span class="campaign-meta">(${e.watch}s)</span>` : '';
                 // Show what was ACTUALLY on screen, per Claude, next to the action.
                 const screen = e.screen ? `<span class="campaign-screen">screen: ${this.escapeHtml(e.screen)}</span>` : '';
+                const rec = e.recovery ? `<span class="agent-msg">↩ ${this.escapeHtml(e.recovery)}</span>` : '';
                 const cmt = e.comment ? `<span class="agent-msg">💬 ${this.escapeHtml(e.comment)}</span>` : '';
                 const reason = e.reason ? `<span class="agent-msg">${this.escapeHtml(e.reason)}</span>` : '';
                 return `<div class="agent-step ${cls}"><strong>${tag}</strong>${acts}${meta} ` +
-                    `${screen}${reason}${cmt}</div>`;
+                    `${screen}${rec}${reason}${cmt}</div>`;
             }).join('');
         }
     }
