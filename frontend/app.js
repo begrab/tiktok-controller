@@ -19,6 +19,8 @@ class TikTokController {
         await this.loadDevices();
         this.bindEvents();
         this.updateConnectionStatus(true);
+        // Reconnect to a campaign that's already running (e.g. after a refresh).
+        this.pollCampaign();
     }
 
     // API Methods
@@ -447,6 +449,89 @@ class TikTokController {
         }
     }
 
+    // NutriSkin Campaign
+    async startCampaign() {
+        if (!this.selectedDevice) return;
+        if (!this.config.has_anthropic_key) {
+            this.showToast('Anthropic API key not configured', 'error');
+            this.openModal();
+            return;
+        }
+        const minutes = parseInt(document.getElementById('campaign-minutes').value) || 30;
+        try {
+            await this.api('/campaign/start', 'POST', {
+                device_id: this.selectedDevice.device_id,
+                duration_minutes: minutes
+            });
+            this.showToast(`Campaign started (${minutes} min)`, 'success');
+            document.getElementById('campaign-log').innerHTML = '';
+            this.startCampaignPolling();
+        } catch (error) {
+            console.error('Campaign start failed:', error);
+        }
+    }
+
+    async stopCampaign() {
+        try {
+            await this.api('/campaign/stop', 'POST');
+            this.showToast('Stopping campaign…', 'info');
+        } catch (error) {
+            console.error('Campaign stop failed:', error);
+        }
+    }
+
+    startCampaignPolling() {
+        if (this._campaignTimer) return;
+        this._campaignTimer = setInterval(() => this.pollCampaign(), 2500);
+        this.pollCampaign();
+    }
+
+    async pollCampaign() {
+        try {
+            const s = await this.api('/campaign/status');
+            this.renderCampaign(s);
+            if (s.running && !this._campaignTimer) {
+                this._campaignTimer = setInterval(() => this.pollCampaign(), 2500);
+            } else if (!s.running && this._campaignTimer) {
+                clearInterval(this._campaignTimer);
+                this._campaignTimer = null;
+            }
+        } catch (error) {
+            clearInterval(this._campaignTimer);
+            this._campaignTimer = null;
+        }
+    }
+
+    renderCampaign(s) {
+        const startBtn = document.getElementById('campaign-start');
+        const stopBtn = document.getElementById('campaign-stop');
+        startBtn.style.display = s.running ? 'none' : '';
+        stopBtn.style.display = s.running ? '' : 'none';
+
+        const st = s.stats || {};
+        const mins = (sec) => `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`;
+        document.getElementById('campaign-status').innerHTML = s.running || s.elapsed
+            ? `<span class="${s.running ? 'running' : ''}">${s.running ? '● running' : '○ stopped'}</span> ` +
+              `· ${mins(s.elapsed || 0)} elapsed` + (s.running ? ` / ${mins(s.remaining || 0)} left` : '') +
+              ` · videos ${st.videos || 0} · relevant ${st.relevant || 0} · ` +
+              `likes ${st.likes || 0} · saves ${st.saves || 0} · comments ${st.comments || 0}` +
+              (st.errors ? ` · errors ${st.errors}` : '')
+            : '';
+
+        const log = document.getElementById('campaign-log');
+        if ((s.recent || []).length) {
+            log.innerHTML = s.recent.slice().reverse().map(e => {
+                const cls = e.relevant === true ? 'ok' : (e.relevant === false ? 'skip' : 'fail');
+                const tag = e.relevant === true ? 'RELEVANT' : (e.relevant === false ? 'skip' : 'error');
+                const acts = (e.actions || []).length ? ` [${e.actions.join(', ')}]` : '';
+                const cmt = e.comment ? `<span class="agent-msg">💬 ${this.escapeHtml(e.comment)}</span>` : '';
+                return `<div class="agent-step ${cls}"><strong>${tag}</strong>${acts} ` +
+                    `<span class="campaign-meta">(${e.watch || 0}s)</span> ` +
+                    `<span class="agent-msg">${this.escapeHtml(e.reason || '')}</span>${cmt}</div>`;
+            }).join('');
+        }
+    }
+
     // Manual Keyboard
     async manualType() {
         if (!this.selectedDevice) return;
@@ -524,7 +609,7 @@ class TikTokController {
 
     updateActionButtons() {
         const hasDevice = !!this.selectedDevice;
-        document.querySelectorAll('.action-btn, #generate-comments, #post-comment, #analyze-video, #toggle-stream, #take-screenshot, #agent-step, #agent-run, #manual-send, .manual-key').forEach(btn => {
+        document.querySelectorAll('.action-btn, #generate-comments, #post-comment, #analyze-video, #toggle-stream, #take-screenshot, #agent-step, #agent-run, #manual-send, .manual-key, #campaign-start').forEach(btn => {
             btn.disabled = !hasDevice;
         });
     }
@@ -603,6 +688,10 @@ class TikTokController {
         // AI Agent
         document.getElementById('agent-step').addEventListener('click', () => this.agentStep());
         document.getElementById('agent-run').addEventListener('click', () => this.agentRun());
+
+        // NutriSkin Campaign
+        document.getElementById('campaign-start').addEventListener('click', () => this.startCampaign());
+        document.getElementById('campaign-stop').addEventListener('click', () => this.stopCampaign());
 
         // Manual Keyboard
         document.getElementById('manual-send').addEventListener('click', () => this.manualType());

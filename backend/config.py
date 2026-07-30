@@ -69,6 +69,28 @@ class Config:
     paste_delay: float = 0.3       # focus -> paste settle time
     swipe_length: float = 0.6      # fraction of the screen per swipe
 
+    # Niche campaign behaviour. Engagement is randomised per relevant video, so
+    # combinations vary naturally; watch times are jittered with occasional long
+    # tails so the pacing reads as human, not on a fixed timer.
+    campaign: dict = field(
+        default_factory=lambda: {
+            # Independent per-action chances on a RELEVANT video.
+            "like_probability": 0.85,
+            "save_probability": 0.5,
+            "comment_probability": 0.4,
+            # Watch time (seconds) ranges: [min, max]; a "long" tail fires with
+            # its chance for the occasional deep-watch / longer glance.
+            "watch_relevant": [8.0, 32.0],
+            "watch_relevant_long": [32.0, 70.0],
+            "watch_relevant_long_chance": 0.15,
+            "watch_irrelevant": [1.0, 4.0],
+            "watch_irrelevant_long": [4.0, 7.0],
+            "watch_irrelevant_long_chance": 0.10,
+            # Small human gap between chained engagement actions.
+            "between_actions": [0.6, 2.2],
+        }
+    )
+
     @property
     def http_base_url(self) -> str:
         return f"http://{self.imouse_host}:{self.imouse_port}/api"

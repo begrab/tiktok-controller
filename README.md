@@ -94,6 +94,8 @@ console is reachable and see discovered devices.
 - `POST /api/devices/{id}/ai/run` — autonomous agent loop (`goal`, `max_steps`)
 - `POST /api/devices/{id}/type` — type text from the PC into the focused field
 - `POST /api/devices/{id}/key` — send a key/hotkey (`fn_key`: `ENTER`, `BACKSPACE`, …)
+- `POST /api/campaign/start` — start the niche campaign (`device_id`, `duration_minutes`)
+- `POST /api/campaign/stop` · `GET /api/campaign/status` — control/monitor it
 - `POST /api/batch/action` — one action across many devices
 - `POST /api/devices/{id}/auto-browse` — randomised engagement session
 - `GET  /api/debug/connection` · `POST /api/debug/raw-command`
@@ -107,6 +109,11 @@ console is reachable and see discovered devices.
 - `backend/tiktok_actions.py` — high-level TikTok flows (`TikTokController`).
 - `backend/ai_agent.py` — Claude perceive→decide→act loop (`TikTokAgent`): OCR
   grounds tappable text, Claude picks one action via tool-use, backend executes.
+  Also the niche **campaign**: per video Claude classifies relevance + writes a
+  fresh comment; the loop skips irrelevant videos fast, watches relevant ones
+  for randomised human-like times, and randomly likes/saves/comments.
+- `backend/niche.py` — the **NutriSkin** profile (description, relevant topics,
+  comment style/examples). Edit this one file to retarget the campaign.
 - `backend/main.py` — FastAPI server + screenshot streaming to the browser.
 - `frontend/` — HTML/JS control panel.
 

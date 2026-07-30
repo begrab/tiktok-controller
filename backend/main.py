@@ -28,6 +28,7 @@ client: Optional[IMouseClient] = None
 registry: Optional[DeviceRegistry] = None
 controller: Optional[TikTokController] = None
 agent: Optional[TikTokAgent] = None
+campaign_task: Optional[asyncio.Task] = None
 ws_clients: set[WebSocket] = set()
 
 
@@ -115,6 +116,11 @@ class UICalibrationUpdate(BaseModel):
 class AIAgentRequest(BaseModel):
     goal: Optional[str] = None
     max_steps: int = 10
+
+
+class CampaignRequest(BaseModel):
+    device_id: str
+    duration_minutes: float = 30.0
 
 
 class ManualTypeRequest(BaseModel):
@@ -328,6 +334,32 @@ async def ai_run(device_id: str, request: AIAgentRequest):
     if not config.anthropic_api_key:
         raise HTTPException(status_code=400, detail="Anthropic API key not configured")
     return await agent.run(device_id, goal=request.goal, max_steps=request.max_steps)
+
+
+# ----------------------------------------------------------- niche campaign ---
+@app.post("/api/campaign/start")
+async def campaign_start(request: CampaignRequest):
+    """Start a long-running, niche-aware campaign as a background task."""
+    global campaign_task
+    if not config.anthropic_api_key:
+        raise HTTPException(status_code=400, detail="Anthropic API key not configured")
+    if agent.campaign_status()["running"]:
+        raise HTTPException(status_code=409, detail="A campaign is already running")
+    seconds = int(max(1.0, request.duration_minutes) * 60)
+    campaign_task = asyncio.create_task(agent.campaign_loop(request.device_id, seconds))
+    return {"status": "started", "duration_minutes": request.duration_minutes}
+
+
+@app.post("/api/campaign/stop")
+async def campaign_stop():
+    """Ask the running campaign to stop at the next safe point."""
+    agent.request_stop()
+    return {"status": "stopping"}
+
+
+@app.get("/api/campaign/status")
+async def campaign_status():
+    return agent.campaign_status()
 
 
 # ------------------------------------------------------------------ batch -----

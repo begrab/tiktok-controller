@@ -19,11 +19,14 @@ never re-sent.
 """
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
+import random
+import time
 from typing import Any, Optional
 
 from api_client import IMouseError
+from niche import NICHE
 from tiktok_actions import ActionResult, TikTokController
 
 logger = logging.getLogger("ai_agent")
@@ -112,6 +115,20 @@ class TikTokAgent:
     def __init__(self, controller: TikTokController):
         self.controller = controller
         self.config = controller.config
+        self._campaign = self._fresh_campaign_state()
+
+    @staticmethod
+    def _fresh_campaign_state() -> dict:
+        return {
+            "running": False,
+            "stop": False,
+            "device_id": None,
+            "duration": 0,
+            "elapsed": 0.0,
+            "stats": {"videos": 0, "relevant": 0, "likes": 0, "saves": 0, "comments": 0, "errors": 0},
+            "log": [],
+            "used_comments": [],
+        }
 
     # --------------------------------------------------------- perceive ------
     async def perceive(self, device_id: str) -> dict:
@@ -266,3 +283,246 @@ class TikTokAgent:
                 break
 
         return {"goal": goal, "steps": steps, "count": len(steps)}
+
+    # ============================================================ campaign ====
+    # A long-running, niche-aware loop: classify each video against the niche,
+    # skip irrelevant ones fast, watch relevant ones for a human-random time,
+    # and engage (like/save/comment) with randomised, varied behaviour.
+
+    def _plan_tool(self) -> list[dict]:
+        return [
+            {
+                "name": "plan_video",
+                "description": (
+                    f"Report whether the current TikTok video is relevant to the "
+                    f"{NICHE['name']} niche and, if so, a fresh personal comment."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "relevant": {
+                            "type": "boolean",
+                            "description": "True only if the video's topic genuinely relates to the niche.",
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "A few words on why it is or isn't relevant.",
+                        },
+                        "comment": {
+                            "type": "string",
+                            "description": "If relevant, a fresh, human, personal-experience comment tailored to THIS video that subtly promotes the product. Leave empty if not relevant.",
+                        },
+                    },
+                    "required": ["relevant", "reason"],
+                },
+            }
+        ]
+
+    def _plan_system(self, used_comments: list[str]) -> str:
+        parts = [
+            f"You are curating a TikTok For You feed for the {NICHE['name']} niche.",
+            f"\n{NICHE['name']} is: {NICHE['description']}",
+            "\nA video is RELEVANT if it relates to any of: "
+            + "; ".join(NICHE["relevant_topics"])
+            + ".",
+            "It is NOT relevant if it's, e.g.: " + "; ".join(NICHE["not_relevant"]) + ".",
+            "Be reasonably strict -- when in doubt, mark it not relevant so we skip it.",
+            "\nIf relevant, also write a comment. " + NICHE["comment_style"],
+            f"Always spell the product name exactly as '{NICHE['name']}' -- never "
+            "misspell it.",
+            "Match the vibe of these examples but DO NOT copy them -- write something "
+            "new that fits THIS specific video:\n- " + "\n- ".join(NICHE["comment_examples"]),
+        ]
+        if used_comments:
+            parts.append(
+                "\nYou have ALREADY posted these comments this session -- write "
+                "something clearly different:\n- " + "\n- ".join(used_comments)
+            )
+        parts.append("\nCall plan_video with your decision.")
+        return "\n".join(parts)
+
+    async def plan_video(self, perception: dict, used_comments: list[str]) -> dict:
+        """One Claude call: relevance + (if relevant) a fresh niche comment."""
+        client = self.controller.ai.client
+
+        elements = perception.get("elements", [])
+        if elements:
+            screen_text = "On-screen text (OCR):\n" + "\n".join(f"- {e['text']}" for e in elements)
+        elif perception.get("ocr_available"):
+            screen_text = "No text detected on screen."
+        else:
+            screen_text = "OCR unavailable; judge from the image."
+
+        content: list[dict] = []
+        if perception.get("screenshot_b64"):
+            content.append(
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": perception["screenshot_b64"],
+                    },
+                }
+            )
+        content.append(
+            {
+                "type": "text",
+                "text": f"{screen_text}\n\nClassify this video for the niche and, "
+                "if relevant, write a fresh comment.",
+            }
+        )
+
+        resp = await client.messages.create(
+            model=self.config.anthropic_model,
+            max_tokens=500,
+            system=self._plan_system(used_comments),
+            tools=self._plan_tool(),
+            tool_choice={"type": "tool", "name": "plan_video"},
+            messages=[{"role": "user", "content": content}],
+        )
+        for block in resp.content:
+            if block.type == "tool_use":
+                data = dict(block.input or {})
+                return {
+                    "relevant": bool(data.get("relevant")),
+                    "reason": data.get("reason", ""),
+                    "comment": (data.get("comment") or "").strip(),
+                }
+        return {"relevant": False, "reason": "no plan returned", "comment": ""}
+
+    # ------------------------------------------------ human-like timing ------
+    def _rand(self, lo: float, hi: float) -> float:
+        return random.uniform(lo, hi)
+
+    def _watch_relevant(self) -> float:
+        c = self.config.campaign
+        if random.random() < c["watch_relevant_long_chance"]:
+            return self._rand(*c["watch_relevant_long"])
+        return self._rand(*c["watch_relevant"])
+
+    def _watch_irrelevant(self) -> float:
+        c = self.config.campaign
+        if random.random() < c["watch_irrelevant_long_chance"]:
+            return self._rand(*c["watch_irrelevant_long"])
+        return self._rand(*c["watch_irrelevant"])
+
+    def _pick_actions(self, has_comment: bool) -> list[str]:
+        c = self.config.campaign
+        actions = []
+        if random.random() < c["like_probability"]:
+            actions.append("like")
+        if random.random() < c["save_probability"]:
+            actions.append("save")
+        if has_comment and random.random() < c["comment_probability"]:
+            actions.append("comment")
+        random.shuffle(actions)  # vary the order too
+        return actions
+
+    async def _sleep(self, seconds: float) -> None:
+        """Cancellable sleep: wakes early when a stop is requested."""
+        end = time.monotonic() + max(0.0, seconds)
+        while time.monotonic() < end and not self._campaign["stop"]:
+            await asyncio.sleep(min(0.5, end - time.monotonic()))
+
+    # ---------------------------------------------------- per-video flow -----
+    async def _campaign_video(self, device_id: str) -> dict:
+        st = self._campaign
+        c = self.config.campaign
+
+        perception = await self.perceive(device_id)
+        if perception.get("error"):
+            st["stats"]["errors"] += 1
+            await self._sleep(2.0)
+            return {"relevant": None, "reason": perception["error"], "actions": [], "watch": 0}
+
+        try:
+            plan = await self.plan_video(perception, st["used_comments"][-6:])
+        except Exception as exc:  # noqa: BLE001
+            st["stats"]["errors"] += 1
+            await self._sleep(2.0)
+            return {"relevant": None, "reason": f"plan failed: {exc}", "actions": [], "watch": 0}
+
+        st["stats"]["videos"] += 1
+
+        if not plan["relevant"]:
+            watch = self._watch_irrelevant()
+            await self._sleep(watch)
+            await self.controller.swipe_next(device_id)
+            return {"relevant": False, "reason": plan["reason"], "actions": [], "watch": round(watch, 1)}
+
+        # Relevant: watch part of the time, engage, linger, then move on.
+        st["stats"]["relevant"] += 1
+        watch = self._watch_relevant()
+        await self._sleep(watch * self._rand(0.3, 0.6))
+
+        done = []
+        for action in self._pick_actions(has_comment=bool(plan["comment"])):
+            if st["stop"]:
+                break
+            if action == "like":
+                if (await self.controller.like_video(device_id)).success:
+                    st["stats"]["likes"] += 1
+                    done.append("like")
+            elif action == "save":
+                if (await self.controller.save_video(device_id)).success:
+                    st["stats"]["saves"] += 1
+                    done.append("save")
+            elif action == "comment":
+                res = await self.controller.comment_on_video(
+                    device_id, comment=plan["comment"], use_ai=False
+                )
+                if res.success:
+                    st["stats"]["comments"] += 1
+                    st["used_comments"].append(plan["comment"])
+                    done.append("comment")
+            await self._sleep(self._rand(*c["between_actions"]))
+
+        await self._sleep(self._watch_relevant_remainder(watch))
+        await self.controller.swipe_next(device_id)
+        return {
+            "relevant": True,
+            "reason": plan["reason"],
+            "actions": done,
+            "comment": plan["comment"] if "comment" in done else "",
+            "watch": round(watch, 1),
+        }
+
+    def _watch_relevant_remainder(self, watch: float) -> float:
+        # A little extra dwell after engaging, jittered.
+        return max(0.0, self._rand(1.0, watch * 0.4))
+
+    # -------------------------------------------------------- run / status ---
+    async def campaign_loop(self, device_id: str, duration_seconds: int) -> dict:
+        st = self._campaign = self._fresh_campaign_state()
+        st.update(running=True, device_id=device_id, duration=duration_seconds)
+        start = time.monotonic()
+        logger.info("Campaign started on %s for %ss", device_id, duration_seconds)
+        try:
+            while (time.monotonic() - start) < duration_seconds and not st["stop"]:
+                entry = await self._campaign_video(device_id)
+                entry["t"] = round(time.monotonic() - start, 1)
+                st["log"].append(entry)
+                st["log"] = st["log"][-200:]
+                st["elapsed"] = round(time.monotonic() - start, 1)
+        finally:
+            st["running"] = False
+            st["elapsed"] = round(time.monotonic() - start, 1)
+            logger.info("Campaign ended: %s", st["stats"])
+        return {"stats": st["stats"], "videos": st["stats"]["videos"]}
+
+    def request_stop(self) -> None:
+        self._campaign["stop"] = True
+
+    def campaign_status(self) -> dict:
+        st = self._campaign
+        remaining = max(0.0, st["duration"] - st["elapsed"]) if st["running"] else 0.0
+        return {
+            "running": st["running"],
+            "device_id": st["device_id"],
+            "duration": st["duration"],
+            "elapsed": st["elapsed"],
+            "remaining": round(remaining, 1),
+            "stats": dict(st["stats"]),
+            "recent": st["log"][-40:],
+        }

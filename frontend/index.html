@@ -129,6 +129,21 @@
                 </div>
             </section>
 
+            <!-- NutriSkin Campaign -->
+            <section class="campaign-panel">
+                <h3>NutriSkin Campaign</h3>
+                <p class="hint">Runs autonomously: watches relevant videos for varied times, skips the rest fast, and randomly likes / saves / comments on NutriSkin-related content. Comments are unique, personal, and on-brand.</p>
+                <div class="campaign-controls">
+                    <label>Minutes: <input type="number" id="campaign-minutes" value="30" min="1" max="240"></label>
+                    <button id="campaign-start" class="btn" disabled>Start Campaign</button>
+                    <button id="campaign-stop" class="btn-small" style="display:none;">Stop</button>
+                </div>
+                <div id="campaign-status" class="campaign-status"></div>
+                <div id="campaign-log" class="agent-log">
+                    <p class="placeholder">Campaign activity will appear here</p>
+                </div>
+            </section>
+
             <!-- Manual Keyboard -->
             <section class="keyboard-panel">
                 <h3>Manual Keyboard</h3>

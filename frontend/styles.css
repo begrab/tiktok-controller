@@ -708,3 +708,28 @@ select:focus, input:focus {
     gap: 8px;
     flex-wrap: wrap;
 }
+
+/* NutriSkin campaign panel */
+.campaign-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+}
+.campaign-controls input#campaign-minutes {
+    width: 64px;
+    padding: 6px;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+.campaign-status {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+}
+.campaign-status .running { color: var(--success); font-weight: 600; }
+.campaign-meta { color: var(--text-secondary); font-size: 0.85em; }
+.agent-step.skip { border-left-color: var(--border); opacity: 0.8; }
