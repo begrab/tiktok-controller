@@ -350,6 +350,36 @@ async def debug_screenshot_info():
     return await screenshot_info(online[0].device_id)
 
 
+@app.get("/api/debug/ocr")
+async def debug_ocr():
+    """Check whether the PaddleOCR plugin is running, on the first online device.
+
+    Open http://localhost:8000/api/debug/ocr directly in the browser.
+    ``ocr_running: true`` with a non-zero ``elements`` count means OCR works and
+    we can anchor taps to exact text coordinates. ``code: 28`` means the plugin
+    process is not connected.
+    """
+    online = registry.online_devices
+    if not online:
+        raise HTTPException(status_code=404, detail="No online device")
+    device_id = online[0].device_id
+    try:
+        result = await controller.api.ocr(device_id)
+    except IMouseError as exc:
+        return {
+            "ocr_running": False,
+            "code": exc.code,
+            "message": str(exc),
+            "hint": "code 28 = PaddleOCR plugin not connected; start it in the console.",
+        }
+    items = result.items
+    sample = [
+        {"text": i.get("text"), "centre": i.get("centre") or i.get("center")}
+        for i in items[:12]
+    ]
+    return {"ocr_running": True, "code": 0, "elements": len(items), "sample": sample}
+
+
 @app.get("/api/devices/{device_id}/screenshot-info")
 async def screenshot_info(device_id: str):
     """Compare the screenshot's real JPEG size to the device's imgw/imgh tap
