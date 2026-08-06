@@ -123,6 +123,7 @@ class TikTokAgent:
         self.controller = controller
         self.config = controller.config
         self._campaign = self._fresh_campaign_state()
+        self._last_locate_source = "map"  # ocr | vision | map (for the log tag)
 
     @staticmethod
     def _fresh_campaign_state() -> dict:
@@ -247,7 +248,7 @@ class TikTokAgent:
             label = {"like": "like_button", "save": "save_button",
                      "repost": "share_button", "comment": "comment_button"}[name]
             hit = pts.get(label)
-            src = f"vision@{hit}" if hit else "map"
+            src = f"{self._last_locate_source}@{hit}" if hit else "map"
             if name == "like":
                 res = await c.like_video(device_id, point=hit)
             elif name == "save":
@@ -586,24 +587,78 @@ class TikTokAgent:
         }
     ]
 
+    @staticmethod
+    def _is_count(text: str) -> bool:
+        """True for a rail count like '1303', '54', '12.3K', '1,2Mio', '1.2万'."""
+        import re
+        t = (text or "").strip()
+        return bool(re.match(r"^[\d][\d.,]*\s*(?:[KkMm]|万|Mio|Tsd)?\.?$", t))
+
+    def _ocr_rail_points(self, perception: dict, w: int, h: int) -> dict:
+        """Anchor rail icons to OCR count coordinates (pixel-exact).
+
+        Every rail icon (heart / comment / bookmark / share) sits directly above
+        its count number. OCR gives each count's exact centre, so the icon is
+        ``count_y - offset``. The offset is derived from the count-to-count
+        spacing (density-independent); with a single count we use the absolute
+        fallback. The rail's counts, top-to-bottom, are like, comment, save,
+        share -- so we assign in that order.
+        """
+        if not w or not h:
+            return {}
+        rail = []
+        for e in perception.get("elements", []):
+            cx, cy = e["centre"]
+            # Right-edge column only, and skip the status bar / bottom nav rows.
+            if cx > w * 0.85 and h * 0.12 < cy < h * 0.90 and self._is_count(e["text"]):
+                rail.append((int(cy), int(cx)))
+        rail.sort()
+        if not rail:
+            return {}
+
+        # Offset from the median gap between consecutive counts.
+        if len(rail) >= 2:
+            gaps = [b[0] - a[0] for a, b in zip(rail, rail[1:])]
+            gaps.sort()
+            spacing = gaps[len(gaps) // 2]
+            offset = int(spacing * self.config.rail_icon_offset_factor)
+        else:
+            offset = self.config.rail_icon_offset_px
+
+        labels = ["like_button", "comment_button", "save_button", "share_button"]
+        points: dict[str, tuple[int, int]] = {}
+        for (cy, cx), label in zip(rail[:4], labels):
+            points[label] = (cx, cy - offset)
+        return points
+
     async def locate_actions(
         self, device_id: str, perception: Optional[dict] = None
     ) -> dict:
-        """Vision-locate the right-rail icons on the current frame.
+        """Locate the right-rail icons on the current frame.
 
-        Returns ``{label: (x, y)}`` for whichever of like/comment/save/share are
-        found. Reuses ``perception``'s screenshot when given (no extra capture).
-        Returns ``{}`` on any failure -- callers then fall back to the UI map.
+        Prefers OCR count anchoring (pixel-exact); falls back to a vision guess
+        only if OCR gave us no rail. Returns ``{label: (x, y)}`` for whichever of
+        like/comment/save/share are found; ``{}`` on failure, so callers can then
+        fall back to the UI map.
         """
         if perception is None:
             perception = await self.perceive(device_id)
-        shot = perception.get("screenshot_b64")
-        if not shot:
-            return {}
 
         device = await self.controller.get_device(device_id)
         w = (device.imgw or device.width) if device else 0
         h = (device.imgh or device.height) if device else 0
+
+        # 1) OCR anchoring -- exact, shift-proof.
+        ocr_pts = self._ocr_rail_points(perception, w, h)
+        if ocr_pts.get("like_button"):
+            self._last_locate_source = "ocr"
+            return ocr_pts
+
+        # 2) Vision fallback (approximate) when OCR has no rail counts.
+        shot = perception.get("screenshot_b64")
+        if not shot:
+            return {}
+        self._last_locate_source = "vision"
 
         elements = perception.get("elements", [])
         ocr_hint = (

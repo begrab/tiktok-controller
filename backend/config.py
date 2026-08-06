@@ -84,6 +84,13 @@ class Config:
     pre_tap_settle: float = 0.18   # pause before every tap so the pointer is at rest
     post_swipe_settle: float = 0.35  # extra rest after a swipe (it drags the pointer)
 
+    # Right-rail icon targeting. Each rail icon (heart/comment/bookmark/share)
+    # sits directly ABOVE its count number, which OCR locates to the exact pixel.
+    # The icon is this fraction of the count-to-count spacing above its count; if
+    # spacing can't be measured (one count only), fall back to the absolute px.
+    rail_icon_offset_factor: float = 0.42
+    rail_icon_offset_px: int = 48
+
     # Niche campaign behaviour. Engagement is randomised per relevant video, so
     # combinations vary naturally; watch times are jittered with occasional long
     # tails so the pacing reads as human, not on a fixed timer.
