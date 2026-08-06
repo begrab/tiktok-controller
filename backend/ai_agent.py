@@ -141,6 +141,7 @@ class TikTokAgent:
             "used_comments": [],
             "last_screenshot": None,   # b64 of the most recent frame, for the UI
             "off_feed_streak": 0,      # consecutive off-feed cycles (escalates recovery)
+            "error_streak": 0,         # consecutive perceive errors (device offline etc.)
         }
 
     # --------------------------------------------------------- perceive ------
@@ -152,6 +153,7 @@ class TikTokAgent:
             result["screenshot_b64"] = await self.controller.get_screenshot_b64(device_id)
         except IMouseError as exc:
             result["error"] = f"screenshot failed: {exc}"
+            result["error_code"] = exc.code  # 25 = device offline, 28 = OCR plugin
             return result
 
         try:
@@ -933,9 +935,31 @@ class TikTokAgent:
         st["last_screenshot"] = perception.get("screenshot_b64")  # live view for UI
         if perception.get("error"):
             st["stats"]["errors"] += 1
-            await self._sleep(2.0)
-            return {"on_feed": None, "screen": "screenshot failed", "relevant": None,
-                    "reason": perception["error"], "actions": [], "watch": 0}
+            st["error_streak"] += 1
+            offline = perception.get("error_code") == 25  # 设备不在线 (device offline)
+            # If the phone dropped off the console, re-query it -- it may have
+            # blipped and come back. Give it a moment, with a little backoff.
+            back_to_online = False
+            if offline:
+                try:
+                    await self.controller.registry.refresh()
+                    back_to_online = any(
+                        d.device_id == device_id
+                        for d in self.controller.registry.online_devices
+                    )
+                except Exception:  # noqa: BLE001
+                    back_to_online = False
+            entry = {"on_feed": None, "screen": "device offline" if offline else "screenshot failed",
+                     "relevant": None, "reason": perception["error"], "actions": [], "watch": 0}
+            # Circuit breaker: don't hammer a dead device unattended. Stop after a
+            # short streak of errors that isn't recovering.
+            if st["error_streak"] >= 6 and not back_to_online:
+                st["stop"] = True
+                entry["actions"].append("STOPPED (device offline / errors not clearing)")
+            else:
+                await self._sleep(min(2.0 + st["error_streak"], 8.0))  # backoff
+            return entry
+        st["error_streak"] = 0
 
         try:
             plan = await self.plan_video(perception, st["used_comments"][-6:])
