@@ -144,6 +144,9 @@ class TikTokAgent:
             "error_streak": 0,         # consecutive perceive errors (device offline etc.)
             "videos_since_comment": 999,  # relevant videos since the last comment
             "comment_gap": 0,          # randomized cooldown target (set on first use)
+            "engaged_sigs": set(),     # signatures of videos already engaged (no re-liking)
+            "last_sig": None,          # signature of the previous cycle's video
+            "same_streak": 0,          # consecutive cycles on the SAME video (stuck)
         }
 
     # --------------------------------------------------------- perceive ------
@@ -936,6 +939,20 @@ class TikTokAgent:
         random.shuffle(actions)  # vary the order too
         return actions
 
+    @staticmethod
+    def _video_sig(perception: dict) -> Optional[str]:
+        """A stable-ish fingerprint of the current video from its OCR text
+        (caption/username words), used to tell one video from another so we
+        don't re-engage the same post or get stuck re-liking it."""
+        words = []
+        for e in perception.get("elements", []):
+            t = (e.get("text") or "").strip().lower()
+            # Keep meaningful words (captions, @names); drop counts and tiny bits.
+            if len(t) >= 4 and not t.replace(".", "").replace(",", "").isdigit():
+                words.append(t)
+        words = sorted(set(words))
+        return " ".join(words[:8]) if words else None
+
     def _comment_allowed(self) -> bool:
         """Sparse, non-spammy commenting: only once the randomized cooldown has
         passed and under the per-run cap."""
@@ -1067,9 +1084,29 @@ class TikTokAgent:
             return {"on_feed": True, "screen": plan["screen"], "post_type": plan.get("post_type", ""),
                     "relevant": False, "reason": plan["reason"], "actions": [], "watch": round(watch, 1)}
 
-        # Relevant: watch part of the time, engage, linger, then move on.
+        # Relevant. First: are we still on a video we already handled, or did the
+        # last swipe fail to advance? If so, DON'T re-engage (that caused the
+        # like/unlike toggling and the stuck loop) -- just move on, harder if
+        # we're clearly stuck.
+        sig = self._video_sig(perception)
+        st["same_streak"] = st["same_streak"] + 1 if (sig and sig == st["last_sig"]) else 0
+        st["last_sig"] = sig
+        already_engaged = bool(sig) and sig in st["engaged_sigs"]
+        if already_engaged or st["same_streak"] >= 1:
+            await self._sleep(self._rand(0.8, 2.0))
+            await self.controller.swipe_next(device_id)
+            if st["same_streak"] >= 2:   # really stuck -- a second swipe to break out
+                await self._sleep(self._rand(0.5, 1.0))
+                await self.controller.swipe_next(device_id)
+            reason = "already engaged" if already_engaged else "same video, advancing"
+            return {"on_feed": True, "screen": plan["screen"], "relevant": True,
+                    "reason": plan["reason"], "actions": [f"skip ({reason})"], "watch": 0}
+
+        # New relevant video: watch part of the time, engage, linger, then move on.
         st["stats"]["relevant"] += 1
         st["videos_since_comment"] += 1
+        if sig:
+            st["engaged_sigs"].add(sig)
         watch = self._watch_relevant()
         await self._sleep(watch * self._rand(0.3, 0.6))
 

@@ -50,30 +50,25 @@ NICHE = {
     # How comments should read. The model writes a NEW comment per video, so
     # this is style guidance, not a script.
     "comment_style": (
-        "Write as a real person leaving a comment that opens with a bit of your "
-        "OWN STRUGGLE with skin/acne -- a specific, personal detail (years of "
-        "hormonal breakouts, cystic acne that wouldn't quit, trying every "
-        "topical and giving up, skin flaring after dairy, crying-in-the-mirror "
-        "kind of honesty) -- and then, only after that, naturally mention that "
-        "NutriSkin was what finally helped, tied to a real feature you'd bring up "
-        "in passing (scanning food for its Skin Score, the gut-health recipes, "
-        "the daily selfie tracker showing the before/after). It should read as a "
-        "relatable confession that happens to recommend the app, NEVER as an ad. "
-        "Vary the struggle, the angle, the wording, the length, and which feature "
-        "you mention every single time -- no two comments should share a phrase "
-        "or structure. 1-2 short sentences, lowercase-casual is fine, at most one "
-        "emoji, and only sometimes. No links, no @mentions, no hashtags, no "
-        "'check out'/'try'/'link in bio' ad phrasing. Tie it to what THIS "
-        "specific video is about so it clearly belongs under that post."
+        "Write ONE short, casual comment -- about 6 to 16 words, one sentence. "
+        "Hint at your own skin/acne struggle in a few words, then slip in that "
+        "NutriSkin helped, tied to one real feature (the food Skin Score, the "
+        "gut-health recipes, or the daily selfie tracker). It must read as a "
+        "quick, relatable personal aside, NEVER an ad. CRITICAL: write the "
+        "comment in the SAME LANGUAGE as the video/post (a German video gets a "
+        "German comment, Spanish gets Spanish, etc.) and match how people "
+        "actually type in that language. Keep 'NutriSkin' spelled exactly. Vary "
+        "the struggle, wording, and feature every time -- never reuse a phrase or "
+        "structure. Lowercase-casual is fine; at most one emoji and only "
+        "sometimes; no links, @mentions, hashtags, or 'check out/try/link in "
+        "bio' phrasing. Tie it to what THIS specific video is about."
     ),
 
-    # Tone examples ONLY -- the model must not copy these, just match the vibe.
+    # Tone/length examples ONLY (shown in English) -- do NOT copy them, and write
+    # the real comment in the video's language. Notice how short they are.
     "comment_examples": [
-        "omg same, I dealt with breakouts for years until I fixed my gut with "
-        "NutriSkin, scanning my food for the skin score was such an eye opener 🙌",
-        "this is so real, NutriSkin showed me how much dairy and sugar were "
-        "wrecking my skin and switching to their recipes cleared it up",
-        "honestly the daily selfie tracker on NutriSkin is what kept me "
-        "consistent, seeing the before and after made it click that it's all gut health",
+        "took me years to learn sugar was my trigger, the NutriSkin scanner made it click",
+        "dairy wrecked my skin for ages, the recipes on NutriSkin finally sorted it",
+        "the daily selfie tracker on NutriSkin is what kept me consistent tbh",
     ],
 }
