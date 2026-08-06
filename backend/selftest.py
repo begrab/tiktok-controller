@@ -98,7 +98,9 @@ def _frame_diff(a, b) -> float:
 # and must never be treated as such.
 COMMENT_HINTS = ("kommentar", "comment", "antworten", "reply", "kommentieren")
 SHARE_HINTS = ("whatsapp", "link kopieren", "copy link", "senden an", "an freunde senden",
-               "repost", "teilen mit", "share to")
+               "repost", "teilen mit", "share to", "story hinzu", "zu story", "in nachricht",
+               "duett", "stitch", "als nachricht", "einbetten", "melden", "kein interesse",
+               "instagram", "messenger", "telegram")
 PROFILE_HINTS = ("follower", "abonnent", "abonniert", "beiträge", "gefällt mir", "reposts")
 
 
@@ -197,26 +199,27 @@ class SelfTest:
         we tap the dimmed backdrop above the sheet; profiles/search use hardware
         Back. We re-check the screen (via the rail) after every attempt.
         """
-        for _ in range(max_tries):
+        for i in range(max_tries):
             screen, _ = await self._screen()
             if screen == "feed":
                 return "feed"
-            if screen in ("share_sheet", "comments"):
-                # Tap the dimmed backdrop above the sheet (top of screen).
-                await self._tap(int(self.w * 0.5), int(self.h * 0.08))
-                await asyncio.sleep(0.6)
-                if (await self._screen())[0] == "feed":
-                    return "feed"
-                # Fallback: swipe the sheet down from high up.
-                try:
+            # The share sheet often classifies as 'unknown' (its text doesn't
+            # match), so DON'T gate the backdrop tap on the classification: a tap
+            # on the dimmed strip above any bottom sheet closes it and is
+            # harmless on a feed video. Try that first on every off-feed screen.
+            await self._tap(int(self.w * 0.5), int(self.h * 0.07))
+            await asyncio.sleep(0.6)
+            if (await self._screen())[0] == "feed":
+                return "feed"
+            # Then a downward swipe (closes the comment sheet), then hardware Back
+            # (for profile/search). Escalate across attempts.
+            try:
+                if i % 2 == 0:
                     await self.c.api.swipe(self.did, "down", 0.9)
-                except IMouseError:
-                    pass
-            else:  # profile / search / unknown -> hardware Back
-                try:
+                else:
                     await self.c.api.send_key(self.did, fn_key="TAB+b")
-                except IMouseError:
-                    pass
+            except IMouseError:
+                pass
             await asyncio.sleep(0.8)
         return (await self._screen())[0]
 
@@ -230,7 +233,14 @@ class SelfTest:
         screen = classify_screen(perc2, self.w, self.h)
         result = {"button": name, "point": [x, y], "before_metric": round(before, 1)}
 
-        if screen != "feed":  # we left the video -> tapped a nav control
+        if screen != "feed":
+            # Re-check once: a like doesn't leave the feed, so a transient 'not
+            # feed' is usually a mid-frame OCR miss. Only a confirmed off-feed is
+            # a real navigation.
+            await asyncio.sleep(0.5)
+            perc2, img2 = await self._perc_img()
+            screen = classify_screen(perc2, self.w, self.h)
+        if screen != "feed":  # confirmed: we left the video -> tapped a nav control
             result["verdict"] = "navigated"
             result["went_to"] = screen
             result["recovered_at"] = await self._return_to_feed()
@@ -275,12 +285,6 @@ class SelfTest:
 
     async def test_share(self, point, img_before):
         return await self._sheet_test("share", point, img_before, "share_sheet")
-
-    async def test_comment(self, point, img_before):
-        return await self._sheet_test("comment", point, img_before, COMMENT_HINTS)
-
-    async def test_share(self, point, img_before):
-        return await self._sheet_test("share", point, img_before, SHARE_HINTS)
 
 
 BUTTON_TO_LABEL = {

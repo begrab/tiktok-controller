@@ -595,40 +595,76 @@ class TikTokAgent:
         return bool(re.match(r"^[\d][\d.,]*\s*(?:[KkMm]|万|Mio|Tsd)?\.?$", t))
 
     def _ocr_rail_points(self, perception: dict, w: int, h: int) -> dict:
-        """Anchor rail icons to OCR count coordinates (pixel-exact).
+        """Anchor rail icons to the OCR rail as a regular 4-slot grid.
 
-        Every rail icon (heart / comment / bookmark / share) sits directly above
-        its count number. OCR gives each count's exact centre, so the icon is
-        ``count_y - offset``. The offset is derived from the count-to-count
-        spacing (density-independent); with a single count we use the absolute
-        fallback. The rail's counts, top-to-bottom, are like, comment, save,
-        share -- so we assign in that order.
+        The rail is 4 evenly-spaced slots below the avatar -- like, comment,
+        save, share -- and each icon sits just above its count NUMBER. OCR gives
+        those numbers' exact centres. But a slot may show a WORD label (Teilen,
+        Speichern) instead of a number, or a count may be missing, so we don't
+        just map the detected numbers 1:1. Instead we:
+          1. find the follow "+" (directly above the like slot) and the numeric
+             counts, all on the right edge;
+          2. derive the slot SPACING (default 107 at 608x1080) and the like-slot
+             y (first count below the "+", else the topmost count);
+          3. lay a 4-slot grid from there, snapping each slot to a real detected
+             count when one is nearby (pixel-exact) and extrapolating otherwise.
+        This yields all four icons even when some slots have word labels.
         """
         if not w or not h:
             return {}
-        rail = []
+        plus_y: Optional[int] = None
+        counts: list[tuple[int, int]] = []
         for e in perception.get("elements", []):
             cx, cy = e["centre"]
-            # Right-edge column only, and skip the status bar / bottom nav rows.
-            if cx > w * 0.85 and h * 0.12 < cy < h * 0.90 and self._is_count(e["text"]):
-                rail.append((int(cy), int(cx)))
-        rail.sort()
-        if not rail:
+            if not (cx > w * 0.85 and h * 0.12 < cy < h * 0.90):
+                continue
+            t = (e.get("text") or "").strip()
+            if t in ("+", "＋"):          # follow badge (ASCII or full-width +)
+                plus_y = int(cy)
+            elif self._is_count(t):
+                counts.append((int(cy), int(cx)))
+        counts.sort()
+        if not counts and plus_y is None:
             return {}
 
-        # Offset from the median gap between consecutive counts.
-        if len(rail) >= 2:
-            gaps = [b[0] - a[0] for a, b in zip(rail, rail[1:])]
-            gaps.sort()
-            spacing = gaps[len(gaps) // 2]
-            offset = int(spacing * self.config.rail_icon_offset_factor)
-        else:
-            offset = self.config.rail_icon_offset_px
+        railx = int(sum(cx for _, cx in counts) / len(counts)) if counts else int(w * 0.917)
+
+        # Slot spacing: the MEDIAN consecutive gap (robust to a spurious element
+        # above/below the rail and to a missing count doubling one gap), and only
+        # if it lands in the plausible rail range; else the known default.
+        spacing = 0
+        if len(counts) >= 2:
+            gaps = sorted(b[0] - a[0] for a, b in zip(counts, counts[1:]))
+            med = gaps[len(gaps) // 2]
+            if 90 <= med <= 125:
+                spacing = med
+        if not spacing:
+            spacing = 107
+        offset = int(spacing * self.config.rail_icon_offset_factor)
+
+        # Like-slot y: the first count below the follow "+", else the topmost.
+        like_y: Optional[int] = None
+        if counts:
+            if plus_y is not None:
+                below = [cy for cy, _ in counts if cy > plus_y + spacing * 0.4]
+                like_y = min(below) if below else counts[0][0]
+            else:
+                like_y = counts[0][0]
+        elif plus_y is not None:
+            like_y = int(plus_y + spacing)   # avatar/"+" sits one slot above like
+        if like_y is None:
+            return {}
 
         labels = ["like_button", "comment_button", "save_button", "share_button"]
         points: dict[str, tuple[int, int]] = {}
-        for (cy, cx), label in zip(rail[:4], labels):
-            points[label] = (cx, cy - offset)
+        for i, label in enumerate(labels):
+            slot_y = like_y + i * spacing
+            near = [cy for cy, _ in counts if abs(cy - slot_y) <= spacing * 0.4]
+            if near:  # snap to the real count for pixel accuracy
+                slot_y = min(near, key=lambda cy: abs(cy - slot_y))
+            icon_y = slot_y - offset
+            if h * 0.10 < icon_y < h * 0.92:
+                points[label] = (railx, int(icon_y))
         return points
 
     async def locate_actions(
