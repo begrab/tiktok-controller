@@ -128,9 +128,26 @@ def _rail_counts(perc: dict, w: int, h: int) -> list:
     return out
 
 
+# Rail slots may show a WORD label instead of a count on low-engagement posts.
+RAIL_WORDS = ("teilen", "speicher", "favorit", "merken", "gespeichert", "share", "save")
+
+
+def _rail_markers(perc: dict, w: int, h: int) -> list:
+    """Right-edge rail entries -- counts OR label words (Teilen/Speichern)."""
+    out = []
+    for e in perc.get("elements", []):
+        cx, cy = e["centre"]
+        if not (cx > w * 0.85 and h * 0.12 < cy < h * 0.90):
+            continue
+        t = (e.get("text") or "").strip().lower()
+        if _is_count_text(t) or any(k in t for k in RAIL_WORDS):
+            out.append((int(cy), int(cx)))
+    return sorted(out)
+
+
 def is_feed(perc: dict, w: int, h: int) -> bool:
-    """On a feed video the right-hand rail shows >=2 count numbers."""
-    return len(_rail_counts(perc, w, h)) >= 2
+    """A feed video shows >=2 rail entries (counts or label words) on the right."""
+    return len(_rail_markers(perc, w, h)) >= 2
 
 
 def classify_screen(perc: dict, w: int, h: int) -> str:
@@ -207,7 +224,7 @@ class SelfTest:
             # match), so DON'T gate the backdrop tap on the classification: a tap
             # on the dimmed strip above any bottom sheet closes it and is
             # harmless on a feed video. Try that first on every off-feed screen.
-            await self._tap(int(self.w * 0.5), int(self.h * 0.07))
+            await self._tap(int(self.w * 0.3), int(self.h * 0.22))
             await asyncio.sleep(0.6)
             if (await self._screen())[0] == "feed":
                 return "feed"
@@ -324,9 +341,10 @@ async def run(rounds: int, buttons: list[str]) -> dict:
                 "tests": [],
             }
 
-            # Only test on an actual feed post (rail counts present).
-            if not pts.get("like_button") or img is None:
-                entry["skipped"] = "no rail counts (not a feed video?)"
+            # Only test on an actual feed post (rail present), not a stray
+            # transitional/overlay frame.
+            if img is None or not is_feed(perc, st.w, st.h) or not pts.get("like_button"):
+                entry["skipped"] = "not a feed video (no rail)"
                 report["rounds"].append(entry)
                 await controller.swipe_next(st.did)
                 await asyncio.sleep(1.4)

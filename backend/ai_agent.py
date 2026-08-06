@@ -614,20 +614,28 @@ class TikTokAgent:
             return {}
         plus_y: Optional[int] = None
         counts: list[tuple[int, int]] = []
+        word_slot: dict[int, int] = {}  # slot index (2=save, 3=share) -> y
         for e in perception.get("elements", []):
             cx, cy = e["centre"]
             if not (cx > w * 0.85 and h * 0.12 < cy < h * 0.90):
                 continue
-            t = (e.get("text") or "").strip()
-            if t in ("+", "＋"):          # follow badge (ASCII or full-width +)
+            raw = (e.get("text") or "").strip()
+            t = raw.lower()
+            if raw in ("+", "＋"):        # follow badge (ASCII or full-width +)
                 plus_y = int(cy)
-            elif self._is_count(t):
+            elif self._is_count(raw):
                 counts.append((int(cy), int(cx)))
+            elif "teilen" in t or "share" in t or "senden" in t:
+                word_slot[3] = int(cy)   # share is the bottom rail slot
+            elif "speicher" in t or "favorit" in t or "merken" in t:
+                word_slot[2] = int(cy)   # save is the third rail slot
         counts.sort()
-        if not counts and plus_y is None:
+        if not counts and plus_y is None and not word_slot:
             return {}
 
         railx = int(sum(cx for _, cx in counts) / len(counts)) if counts else int(w * 0.917)
+        if not railx:
+            railx = int(w * 0.917)
 
         # Slot spacing: the MEDIAN consecutive gap (robust to a spurious element
         # above/below the rail and to a missing count doubling one gap), and only
@@ -642,16 +650,19 @@ class TikTokAgent:
             spacing = 107
         offset = int(spacing * self.config.rail_icon_offset_factor)
 
-        # Like-slot y: the first count below the follow "+", else the topmost.
+        # Like-slot y (the y of the like COUNT). Anchor priority, most reliable
+        # first: the follow "+" (directly above the like slot) -> a label word
+        # like Teilen/Speichern (marks an ABSOLUTE slot, so it disambiguates
+        # which count is which) -> the topmost count (assumes like has a count).
         like_y: Optional[int] = None
-        if counts:
-            if plus_y is not None:
-                below = [cy for cy, _ in counts if cy > plus_y + spacing * 0.4]
-                like_y = min(below) if below else counts[0][0]
-            else:
-                like_y = counts[0][0]
-        elif plus_y is not None:
-            like_y = int(plus_y + spacing)   # avatar/"+" sits one slot above like
+        if plus_y is not None:
+            below = [cy for cy, _ in counts if cy > plus_y + spacing * 0.4]
+            like_y = min(below) if below else int(plus_y + spacing)
+        elif word_slot:
+            slot = max(word_slot)  # prefer share (3) over save (2)
+            like_y = int(word_slot[slot] - slot * spacing)
+        elif counts:
+            like_y = counts[0][0]
         if like_y is None:
             return {}
 

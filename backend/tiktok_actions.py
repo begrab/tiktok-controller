@@ -296,7 +296,10 @@ class TikTokController:
         await asyncio.sleep(self.config.action_delay)
         device = await self.get_device(device_id)
         if device:
-            bx, by = device.to_pixels(0.5, 0.08)  # backdrop strip above any sheet
+            # Tap the dimmed backdrop above the sheet -- but well BELOW the top
+            # tab bar (Gefolgt / Für dich / search at ~y=0.06), which would
+            # switch feeds or open search. y=0.22 is pure scrim.
+            bx, by = device.to_pixels(0.3, 0.22)
             try:
                 await self._click(device_id, bx, by)
             except IMouseError:
