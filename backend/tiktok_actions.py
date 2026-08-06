@@ -286,10 +286,21 @@ class TikTokController:
         etc.). Used on every comment/save/repost exit path so the agent never
         gets stuck in a dialog with no way back.
         """
+        # A downward swipe closes the comment sheet, but TikTok's SHARE sheet
+        # often ignores it -- the reliable close is tapping the dimmed backdrop
+        # above the sheet. Do both so either sheet ends up dismissed.
         try:
-            await self.api.swipe(device_id, "down", 0.6)
+            await self.api.swipe(device_id, "down", 0.85)
         except IMouseError:
             pass
+        await asyncio.sleep(self.config.action_delay)
+        device = await self.get_device(device_id)
+        if device:
+            bx, by = device.to_pixels(0.5, 0.08)  # backdrop strip above any sheet
+            try:
+                await self._click(device_id, bx, by)
+            except IMouseError:
+                pass
         await asyncio.sleep(self.config.action_delay)
 
     async def open_comments(

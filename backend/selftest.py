@@ -89,15 +89,17 @@ def _frame_diff(a, b) -> float:
 
 
 # --------------------------------------------------------------- semantics ---
-COMMENT_HINTS = ("kommentar", "comment", "antworten", "reply")
-SHARE_HINTS = ("teilen", "share", "repost", "whatsapp", "link kopieren", "copy link", "senden an")
-OFFFEED_HINTS = {
-    "profile": ("follower", "gefolgt", "abonniert", "following", "beiträge", "posts", "reposts"),
-    "comments": ("kommentar", "comment"),
-    "share_sheet": ("teilen", "whatsapp", "link kopieren", "repost"),
-    "live": ("live", "zuschauer", "viewers"),
-    "search": ("suchen", "search", "ergebnisse", "results"),
-}
+# Screen identity is decided by OCR, NOT by a pixel diff -- the feed video is
+# always in motion, so a frame diff can't tell a like from a navigation.
+#
+# The decisive feed signal is the right-hand RAIL of count numbers. Sheets cover
+# it; profiles/search replace it. NOTE: 'Gefolgt'/'Für dich' are the feed's own
+# top tabs and 'Profile' is the bottom nav label -- they are NOT off-feed signals
+# and must never be treated as such.
+COMMENT_HINTS = ("kommentar", "comment", "antworten", "reply", "kommentieren")
+SHARE_HINTS = ("whatsapp", "link kopieren", "copy link", "senden an", "an freunde senden",
+               "repost", "teilen mit", "share to")
+PROFILE_HINTS = ("follower", "abonnent", "abonniert", "beiträge", "gefällt mir", "reposts")
 
 
 def _texts(perc: dict) -> list[str]:
@@ -109,29 +111,53 @@ def _has_any(perc: dict, hints) -> bool:
     return any(h in joined for h in hints)
 
 
-def _guess_screen(perc: dict) -> str:
-    for name, hints in OFFFEED_HINTS.items():
-        if _has_any(perc, hints):
-            return name
+def _is_count_text(text: str) -> bool:
+    t = (text or "").strip()
+    return bool(re.match(r"^[\d][\d.,]*\s*(?:[KkMm]|万|Mio\.?|Tsd\.?)?$", t))
+
+
+def _rail_counts(perc: dict, w: int, h: int) -> list:
+    out = []
+    for e in perc.get("elements", []):
+        cx, cy = e["centre"]
+        if cx > w * 0.85 and h * 0.12 < cy < h * 0.90 and _is_count_text(e["text"]):
+            out.append((int(cy), int(cx), e["text"]))
+    out.sort()
+    return out
+
+
+def is_feed(perc: dict, w: int, h: int) -> bool:
+    """On a feed video the right-hand rail shows >=2 count numbers."""
+    return len(_rail_counts(perc, w, h)) >= 2
+
+
+def classify_screen(perc: dict, w: int, h: int) -> str:
+    """feed | share_sheet | comments | profile | unknown (OCR-based)."""
+    if is_feed(perc, w, h):
+        return "feed"
+    if _has_any(perc, SHARE_HINTS):
+        return "share_sheet"
+    if _has_any(perc, COMMENT_HINTS):
+        return "comments"
+    if _has_any(perc, PROFILE_HINTS):
+        return "profile"
     return "unknown"
 
 
 def _scenario(perc: dict, w: int, h: int) -> dict:
-    elems = perc.get("elements", [])
-    texts = [e.get("text", "") for e in elems]
+    texts = [e.get("text", "") for e in perc.get("elements", [])]
     slideshow = any(re.search(r"\b\d+\s*/\s*\d+\b", t) for t in texts)
-    bottom = [
-        {"text": e["text"], "centre": e["centre"]}
-        for e in elems if e["centre"][1] > h * 0.86
-    ]
-    rail = [e for e in elems if e["centre"][0] > w * 0.85 and h * 0.12 < e["centre"][1] < h * 0.9]
-    label = "slideshow" if slideshow else ("search_bar" if bottom else "plain_video")
-    return {
-        "label": label,
-        "slideshow": slideshow,
-        "bottom_bar_elements": bottom,
-        "n_rail_counts": len(rail),
-    }
+    rail = _rail_counts(perc, w, h)
+    top = rail[0][0] if rail else None
+    # 'shifted' when the rail rides high (bottom overlay pushed it up) -- the case
+    # that used to break fixed coordinates.
+    if slideshow:
+        label = "slideshow"
+    elif top is not None and top < h * 0.46:
+        label = "rail_shifted"
+    else:
+        label = "video"
+    return {"label": label, "rail_top_y": top, "n_rail_counts": len(rail)}
 
 
 def _right_edge(perc: dict, w: int) -> list[dict]:
@@ -160,49 +186,66 @@ class SelfTest:
     async def _tap(self, x: int, y: int):
         await self.c._click(self.did, int(x), int(y))
 
-    async def _recover(self) -> str:
-        """Get back to a feed video after a mis-tap navigated away."""
-        try:
-            await self.c.api.send_key(self.did, fn_key="TAB+b")
-        except IMouseError:
-            pass
-        await asyncio.sleep(0.8)
+    async def _screen(self) -> tuple[str, dict]:
         perc, _ = await self._perc_img()
-        if _guess_screen(perc) != "unknown":
-            # still off-feed: pull down (dismiss sheet) then Home
-            try:
-                await self.c.api.swipe(self.did, "down", 0.6)
-            except IMouseError:
-                pass
+        return classify_screen(perc, self.w, self.h), perc
+
+    async def _return_to_feed(self, max_tries: int = 5) -> str:
+        """Get back to a feed video, whatever we're stuck on. Verified by OCR.
+
+        Bottom sheets (share/comment) do NOT reliably close on a swipe-down, so
+        we tap the dimmed backdrop above the sheet; profiles/search use hardware
+        Back. We re-check the screen (via the rail) after every attempt.
+        """
+        for _ in range(max_tries):
+            screen, _ = await self._screen()
+            if screen == "feed":
+                return "feed"
+            if screen in ("share_sheet", "comments"):
+                # Tap the dimmed backdrop above the sheet (top of screen).
+                await self._tap(int(self.w * 0.5), int(self.h * 0.08))
+                await asyncio.sleep(0.6)
+                if (await self._screen())[0] == "feed":
+                    return "feed"
+                # Fallback: swipe the sheet down from high up.
+                try:
+                    await self.c.api.swipe(self.did, "down", 0.9)
+                except IMouseError:
+                    pass
+            else:  # profile / search / unknown -> hardware Back
+                try:
+                    await self.c.api.send_key(self.did, fn_key="TAB+b")
+                except IMouseError:
+                    pass
             await asyncio.sleep(0.8)
-        return _guess_screen(perc)
+        return (await self._screen())[0]
 
     async def _toggle_test(self, name: str, point, metric_fn, img_before, on_thresh: float):
-        """Shared logic for like/save: tap, classify, restore."""
+        """like/save: tap, then decide by OCR (navigation) + icon colour (toggle)."""
         x, y = int(point[0]), int(point[1])
         before = metric_fn(img_before, x, y)
         await self._tap(x, y)
         await asyncio.sleep(0.9)
         perc2, img2 = await self._perc_img()
-        fd = _frame_diff(img_before, img2)
-        result = {"button": name, "point": [x, y], "before_metric": round(before, 1), "frame_diff": round(fd, 3)}
+        screen = classify_screen(perc2, self.w, self.h)
+        result = {"button": name, "point": [x, y], "before_metric": round(before, 1)}
 
-        if fd > 0.06:  # screen changed a lot -> we tapped a nav control
+        if screen != "feed":  # we left the video -> tapped a nav control
             result["verdict"] = "navigated"
-            result["went_to"] = _guess_screen(perc2)
-            result["recovered_at"] = await self._recover()
+            result["went_to"] = screen
+            result["recovered_at"] = await self._return_to_feed()
             return result
 
-        after = metric_fn(img2, x, y)
+        after = metric_fn(img2, x, y) if img2 else before
         result["after_metric"] = round(after, 1)
         toggled = abs(after - before) > on_thresh
         result["verdict"] = "hit" if toggled else "missed"
-        if toggled:  # restore original state
+        if toggled:  # restore original state so the account is left untouched
             await self._tap(x, y)
             await asyncio.sleep(0.7)
             _, img3 = await self._perc_img()
             back = metric_fn(img3, x, y) if img3 else after
-            result["restored"] = abs(back - before) < max(20.0, on_thresh)
+            result["restored"] = abs(back - before) < max(25.0, on_thresh)
         return result
 
     async def test_like(self, point, img_before):
@@ -211,31 +254,27 @@ class SelfTest:
     async def test_save(self, point, img_before):
         return await self._toggle_test("save", point, _yellowness, img_before, on_thresh=40.0)
 
-    async def _sheet_test(self, name: str, point, img_before, hints):
-        """Shared logic for comment/share: tap, verify the sheet opened, dismiss."""
+    async def _sheet_test(self, name: str, point, img_before, expect: str):
+        """comment/share: tap, verify the RIGHT sheet opened (OCR), then dismiss."""
         x, y = int(point[0]), int(point[1])
         await self._tap(x, y)
         await asyncio.sleep(1.1)
-        perc2, img2 = await self._perc_img()
-        fd = _frame_diff(img_before, img2)
-        opened = fd > 0.12 and _has_any(perc2, hints)
-        result = {
-            "button": name, "point": [x, y], "frame_diff": round(fd, 3),
-            "sheet_text_found": _has_any(perc2, hints),
-            "verdict": "hit" if opened else ("navigated" if fd > 0.12 else "missed"),
-        }
-        if not opened and fd > 0.12:
-            result["went_to"] = _guess_screen(perc2)
-        # Always dismiss whatever opened so the next round starts clean.
-        try:
-            await self.c.api.swipe(self.did, "down", 0.6)
-        except IMouseError:
-            pass
-        await asyncio.sleep(0.7)
-        perc3, _ = await self._perc_img()
-        if _guess_screen(perc3) != "unknown":
-            await self._recover()
+        screen, _ = await self._screen()
+        if screen == expect:
+            verdict = "hit"
+        elif screen == "feed":
+            verdict = "missed"          # tapped dead space, sheet never opened
+        else:
+            verdict = "navigated"       # opened the wrong thing
+        result = {"button": name, "point": [x, y], "screen_after": screen, "verdict": verdict}
+        result["recovered_at"] = await self._return_to_feed()
         return result
+
+    async def test_comment(self, point, img_before):
+        return await self._sheet_test("comment", point, img_before, "comments")
+
+    async def test_share(self, point, img_before):
+        return await self._sheet_test("share", point, img_before, "share_sheet")
 
     async def test_comment(self, point, img_before):
         return await self._sheet_test("comment", point, img_before, COMMENT_HINTS)
@@ -339,8 +378,10 @@ def _summarize(report: dict) -> None:
     if failures:
         print(f"\n---- {len(failures)} FAILURE(S) (with rail data for diagnosis) ----")
         for rnd_i, scen, t, rnd in failures[:20]:
+            extra = t.get("went_to") or t.get("screen_after")
             print(f"\nround {rnd_i} [{scen}] {t['button']} -> {t['verdict']}"
-                  + (f" (went_to={t.get('went_to')})" if t.get("went_to") else ""))
+                  + (f" (screen={extra})" if extra else "")
+                  + (f" recovered={t.get('recovered_at')}" if t.get("recovered_at") else ""))
             print(f"  computed: {rnd['computed_points'].get(BUTTON_TO_LABEL.get(t['button']))}")
             print(f"  right_edge OCR: {[ (e['text'], e['centre']) for e in rnd['right_edge'] ]}")
     else:
