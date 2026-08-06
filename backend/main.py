@@ -338,6 +338,16 @@ async def tap(device_id: str, req: TapRequest):
         return {"success": False, "message": str(exc)}
 
 
+@app.get("/api/debug/screenshot-info")
+async def debug_screenshot_info():
+    """Same as screenshot-info but auto-picks the first online device (no ID to
+    paste). Open http://localhost:8000/api/debug/screenshot-info directly."""
+    online = registry.online_devices
+    if not online:
+        raise HTTPException(status_code=404, detail="No online device")
+    return await screenshot_info(online[0].device_id)
+
+
 @app.get("/api/devices/{device_id}/screenshot-info")
 async def screenshot_info(device_id: str):
     """Compare the screenshot's real JPEG size to the device's imgw/imgh tap
