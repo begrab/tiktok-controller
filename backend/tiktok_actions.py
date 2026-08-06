@@ -62,6 +62,43 @@ class TikTokController:
         pt = get_point(screen, label)
         return (int(pt[0]), int(pt[1])) if pt else None
 
+    # ------------------------------------------------------- mirror recovery --
+    async def screenshot_works(self, device_id: str) -> bool:
+        """True if the AirPlay mirror is up (a screenshot succeeds)."""
+        try:
+            await self.api.screenshot(device_id, binary=True)
+            return True
+        except IMouseError:
+            return False
+
+    async def recover_mirror(self, device_id: str) -> bool:
+        """Try to re-establish the dropped AirPlay mirror from the phone side.
+
+        Control still works over USB even when the mirror is down, so we drive
+        the phone's Control Center (opened with the ``ControlBar`` hotkey) and
+        re-tap Screen Mirroring -> the PC receiver, using coordinates calibrated
+        once while the mirror was up (``control_center`` in the UI map). Returns
+        True only if a screenshot succeeds afterwards. Returns False (so the
+        caller stops cleanly) when it isn't calibrated or the re-cast didn't take.
+        """
+        mirror_btn = get_point("control_center", "screen_mirroring")
+        receiver = get_point("control_center", "airplay_receiver")
+        if not mirror_btn:
+            return False  # not calibrated -- can't safely blind-tap Control Center
+        try:
+            await self.api.send_key(device_id, fn_key="ControlBar")
+            await asyncio.sleep(1.3)
+            await self.api.click(device_id, int(mirror_btn[0]), int(mirror_btn[1]))
+            await asyncio.sleep(1.6)
+            if receiver:
+                await self.api.click(device_id, int(receiver[0]), int(receiver[1]))
+                await asyncio.sleep(3.5)  # AirPlay needs a moment to re-establish
+            await self.api.send_key(device_id, fn_key="WIN+h")  # Home closes CC
+            await asyncio.sleep(1.5)
+        except IMouseError:
+            return False
+        return await self.screenshot_works(device_id)
+
     # ---------------------------------------------------------- screenshots ---
     async def get_screenshot_bytes(self, device_id: str) -> bytes:
         """Raw JPEG bytes of the current screen."""

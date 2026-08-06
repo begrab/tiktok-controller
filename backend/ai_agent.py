@@ -758,6 +758,59 @@ class TikTokAgent:
                             points[label] = (x, y)
         return points
 
+    async def locate_one(
+        self, screenshot_b64: str, w: int, h: int, what: str
+    ) -> Optional[tuple[int, int]]:
+        """Vision-locate a single named control on an arbitrary screenshot.
+
+        Used to calibrate off-app screens (e.g. Control Center for mirror
+        re-cast). Returns (x, y) in the imgw x imgh space, or None if not found.
+        """
+        if not screenshot_b64:
+            return None
+        tool = [{
+            "name": "locate",
+            "description": f"Report the pixel tap point of {what}.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "found": {"type": "boolean"},
+                    "x": {"type": "integer"},
+                    "y": {"type": "integer"},
+                },
+                "required": ["found"],
+            },
+        }]
+        system = (
+            f"The screenshot is {w} pixels wide and {h} tall (origin top-left). "
+            f"Find {what} and give its centre tap point in that exact pixel space. "
+            "Call locate; set found=false if it is not visible."
+        )
+        content = [
+            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": screenshot_b64}},
+            {"type": "text", "text": f"Locate: {what}."},
+        ]
+        try:
+            resp = await self.controller.ai.client.messages.create(
+                model=self.config.anthropic_model,
+                max_tokens=200,
+                system=system,
+                tools=tool,
+                tool_choice={"type": "tool", "name": "locate"},
+                messages=[{"role": "user", "content": content}],
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("locate_one failed: %s", exc)
+            return None
+        for block in resp.content:
+            if block.type == "tool_use":
+                d = dict(block.input or {})
+                if d.get("found") and d.get("x") is not None and d.get("y") is not None:
+                    x, y = int(d["x"]), int(d["y"])
+                    if 0 <= x <= w and 0 <= y <= h:
+                        return (x, y)
+        return None
+
     # ------------------------------------------------ vision recovery --------
     # Blind fixed-coordinate taps are dangerous (top-left = LIVE, wrong bottom
     # tab = DMs/profile), so recovery is vision-guided: Claude looks at the stuck
@@ -936,26 +989,30 @@ class TikTokAgent:
         if perception.get("error"):
             st["stats"]["errors"] += 1
             st["error_streak"] += 1
-            offline = perception.get("error_code") == 25  # 设备不在线 (device offline)
-            # If the phone dropped off the console, re-query it -- it may have
-            # blipped and come back. Give it a moment, with a little backoff.
-            back_to_online = False
-            if offline:
+            # code 25 = the AirPlay mirror dropped (control still works over USB,
+            # so checking device online-state is useless -- a screenshot is the
+            # only real test). Try to re-cast the mirror from the phone side.
+            mirror_down = perception.get("error_code") == 25
+            entry = {"on_feed": None, "relevant": None, "actions": [],
+                     "reason": perception["error"], "watch": 0,
+                     "screen": "mirror dropped" if mirror_down else "screenshot failed"}
+            recovered = False
+            if mirror_down:
                 try:
-                    await self.controller.registry.refresh()
-                    back_to_online = any(
-                        d.device_id == device_id
-                        for d in self.controller.registry.online_devices
-                    )
+                    recovered = await self.controller.recover_mirror(device_id)
                 except Exception:  # noqa: BLE001
-                    back_to_online = False
-            entry = {"on_feed": None, "screen": "device offline" if offline else "screenshot failed",
-                     "relevant": None, "reason": perception["error"], "actions": [], "watch": 0}
-            # Circuit breaker: don't hammer a dead device unattended. Stop after a
-            # short streak of errors that isn't recovering.
-            if st["error_streak"] >= 6 and not back_to_online:
+                    recovered = False
+            if recovered:
+                st["error_streak"] = 0
+                entry["actions"].append("re-cast mirror OK")
+                return entry
+            # Circuit breaker: never hammer a dead mirror unattended. Stop after a
+            # short streak of unrecovered errors with a clear status.
+            if st["error_streak"] >= 6:
                 st["stop"] = True
-                entry["actions"].append("STOPPED (device offline / errors not clearing)")
+                why = ("mirror down; re-cast unavailable (not calibrated) or failed"
+                       if mirror_down else "screenshot errors not clearing")
+                entry["actions"].append(f"STOPPED ({why})")
             else:
                 await self._sleep(min(2.0 + st["error_streak"], 8.0))  # backoff
             return entry

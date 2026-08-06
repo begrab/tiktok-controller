@@ -413,6 +413,87 @@ async def debug_rail():
     }
 
 
+@app.post("/api/mirror/calibrate")
+async def mirror_calibrate():
+    """Calibrate the AirPlay mirror re-cast: learn the Control Center Screen
+    Mirroring button and the PC receiver row, so the campaign can re-establish a
+    dropped mirror on its own. Run this ONCE while the mirror is up.
+
+    It opens Control Center, vision-locates the mirroring button, taps it to
+    reveal the receiver list (this does NOT disconnect), vision-locates the
+    receiver (without tapping it), then closes. Returns the screenshots + points
+    so you can verify. Saves to the 'control_center' UI map on success.
+    """
+    online = registry.online_devices
+    if not online:
+        raise HTTPException(status_code=404, detail="No online device")
+    did = online[0].device_id
+    device = registry.get(did)
+    w = (device.imgw or device.width) if device else 0
+    h = (device.imgh or device.height) if device else 0
+
+    await client.send_key(did, fn_key="ControlBar")
+    await asyncio.sleep(1.4)
+    try:
+        shot_cc = await controller.get_screenshot_b64(did)
+    except IMouseError as exc:
+        raise HTTPException(status_code=502, detail=f"screenshot failed: {exc}")
+    mirror_pt = await agent.locate_one(
+        shot_cc, w, h,
+        "the Screen Mirroring / AirPlay button in iOS Control Center "
+        "(icon of two overlapping rounded rectangles, often labelled "
+        "'Bildschirmsynchronisation' or 'Screen Mirroring')",
+    )
+
+    shot_recv = None
+    receiver_pt = None
+    if mirror_pt:
+        await client.click(did, mirror_pt[0], mirror_pt[1])
+        await asyncio.sleep(1.6)
+        try:
+            shot_recv = await controller.get_screenshot_b64(did)
+            receiver_pt = await agent.locate_one(
+                shot_recv, w, h,
+                "the FIRST device row in the AirPlay screen-mirroring list "
+                "(the PC/Mac receiver to mirror to)",
+            )
+        except IMouseError:
+            shot_recv = None
+
+    await client.send_key(did, fn_key="WIN+h")  # Home closes Control Center
+    await asyncio.sleep(1.0)
+
+    elements = {}
+    if mirror_pt:
+        elements["screen_mirroring"] = list(mirror_pt)
+    if receiver_pt:
+        elements["airplay_receiver"] = list(receiver_pt)
+    if elements:
+        save_screen("control_center", elements, w, h)
+    return {
+        "ok": bool(mirror_pt and receiver_pt),
+        "saved": elements,
+        "screen_mirroring": mirror_pt,
+        "airplay_receiver": receiver_pt,
+        "screenshot_control_center": shot_cc,
+        "screenshot_receivers": shot_recv,
+        "hint": "Verify the points sit on the right controls. Re-run if off.",
+    }
+
+
+@app.get("/api/mirror/status")
+async def mirror_status():
+    """Report whether the mirror is up (a screenshot works) and whether re-cast
+    is calibrated."""
+    online = registry.online_devices
+    calibrated = bool(load_map().get("screens", {}).get("control_center", {}).get("screen_mirroring"))
+    if not online:
+        return {"online": False, "mirror_up": False, "recast_calibrated": calibrated}
+    did = online[0].device_id
+    up = await controller.screenshot_works(did)
+    return {"online": True, "mirror_up": up, "recast_calibrated": calibrated}
+
+
 @app.get("/api/devices/{device_id}/screenshot-info")
 async def screenshot_info(device_id: str):
     """Compare the screenshot's real JPEG size to the device's imgw/imgh tap
