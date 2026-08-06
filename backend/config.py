@@ -74,6 +74,16 @@ class Config:
     paste_delay: float = 0.3       # focus -> paste settle time
     swipe_length: float = 0.6      # fraction of the screen per swipe
 
+    # Relative-mouse pointer settling. The board is a RELATIVE HID mouse: the
+    # console turns an absolute (x, y) into a move-from-current-position then a
+    # click. If the pointer is still travelling (tracking speed) or was asleep
+    # (AssistiveTouch auto-hide), the click fires early and lands short. These
+    # let the pointer come to rest before we tap. The real fix is phone/console
+    # settings (tracking speed at max, no auto-hide) -- these just stop us from
+    # racing the pointer between our own commands.
+    pre_tap_settle: float = 0.18   # pause before every tap so the pointer is at rest
+    post_swipe_settle: float = 0.35  # extra rest after a swipe (it drags the pointer)
+
     # Niche campaign behaviour. Engagement is randomised per relevant video, so
     # combinations vary naturally; watch times are jittered with occasional long
     # tails so the pacing reads as human, not on a fixed timer.

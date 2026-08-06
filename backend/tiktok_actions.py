@@ -121,6 +121,10 @@ class TikTokController:
 
     # ---------------------------------------------------------- core taps -----
     async def _click(self, device_id: str, x: int, y: int) -> ActionResult:
+        # Let the relative-mouse pointer come to rest before tapping, so the
+        # click doesn't fire while the pointer is still travelling to (x, y).
+        if self.config.pre_tap_settle:
+            await asyncio.sleep(self.config.pre_tap_settle)
         try:
             await self.api.click(device_id, x, y)
             return ActionResult.ok()
@@ -130,6 +134,8 @@ class TikTokController:
     async def swipe_next(self, device_id: str) -> ActionResult:
         try:
             await self.api.swipe(device_id, "up", self.config.swipe_length)
+            # A swipe drags the pointer; give it a beat to settle before any tap.
+            await asyncio.sleep(self.config.post_swipe_settle)
             return ActionResult.ok("Swiped to next video")
         except IMouseError as exc:
             return ActionResult.fail(str(exc))
@@ -137,6 +143,7 @@ class TikTokController:
     async def swipe_previous(self, device_id: str) -> ActionResult:
         try:
             await self.api.swipe(device_id, "down", self.config.swipe_length)
+            await asyncio.sleep(self.config.post_swipe_settle)
             return ActionResult.ok("Swiped to previous video")
         except IMouseError as exc:
             return ActionResult.fail(str(exc))

@@ -330,12 +330,14 @@ def _jpeg_size(data: bytes):
 
 @app.post("/api/devices/{device_id}/tap")
 async def tap(device_id: str, req: TapRequest):
-    """Tap an exact pixel -- used by the frontend Tap Test to verify coordinates."""
-    try:
-        await client.click(device_id, req.x, req.y)
-        return {"success": True, "x": req.x, "y": req.y}
-    except IMouseError as exc:
-        return {"success": False, "message": str(exc)}
+    """Tap an exact pixel -- used by the frontend Tap Test to verify coordinates.
+
+    Routed through the controller's settled click path (the same one the
+    campaign uses) so the Tap Test measures real behaviour, including the
+    pointer-settle that guards against relative-mouse drift.
+    """
+    result = await controller._click(device_id, req.x, req.y)
+    return {"success": result.success, "x": req.x, "y": req.y, "message": result.message}
 
 
 @app.get("/api/debug/screenshot-info")
