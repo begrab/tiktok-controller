@@ -19,6 +19,7 @@ from api_client import IMouseClient, IMouseError
 from config import Config
 from device_manager import DeviceRegistry
 from tiktok_actions import TikTokController
+from ui_map import load_map, save_screen
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("main")
@@ -121,6 +122,13 @@ class AIAgentRequest(BaseModel):
 class CampaignRequest(BaseModel):
     device_id: str
     duration_minutes: float = 30.0
+
+
+class UIMapSave(BaseModel):
+    screen_type: str
+    elements: dict  # {label: [x, y]}
+    imgw: int = 0
+    imgh: int = 0
 
 
 class ManualTypeRequest(BaseModel):
@@ -334,6 +342,28 @@ async def ai_run(device_id: str, request: AIAgentRequest):
     if not config.anthropic_api_key:
         raise HTTPException(status_code=400, detail="Anthropic API key not configured")
     return await agent.run(device_id, goal=request.goal, max_steps=request.max_steps)
+
+
+# ------------------------------------------------------- interface explorer ---
+@app.post("/api/devices/{device_id}/analyze-ui")
+async def analyze_ui(device_id: str):
+    """Map the current screen's controls to pixel coordinates (vision + OCR)."""
+    if not config.anthropic_api_key:
+        raise HTTPException(status_code=400, detail="Anthropic API key not configured")
+    result = await agent.analyze_ui(device_id)
+    if result.get("error"):
+        raise HTTPException(status_code=502, detail=result["error"])
+    return result
+
+
+@app.get("/api/ui-map")
+async def get_ui_map():
+    return load_map()
+
+
+@app.post("/api/ui-map")
+async def post_ui_map(body: UIMapSave):
+    return save_screen(body.screen_type, body.elements, body.imgw, body.imgh)
 
 
 # ----------------------------------------------------------- niche campaign ---

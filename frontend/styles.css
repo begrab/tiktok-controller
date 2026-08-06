@@ -766,3 +766,25 @@ select:focus, input:focus {
     .campaign-live { flex-direction: column; }
     .campaign-snapshot { width: 100%; max-width: 220px; }
 }
+
+/* Interface Explorer */
+.explorer-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.explorer-controls input#explore-screen-type { padding: 6px 8px; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius); }
+.explorer-body { display: flex; gap: 14px; align-items: flex-start; }
+.explore-canvas { flex: 0 0 auto; }
+.ex-imgwrap { position: relative; display: inline-block; line-height: 0; cursor: crosshair; }
+.ex-imgwrap img { width: 230px; display: block; border: 1px solid var(--border); border-radius: var(--radius); }
+.ex-overlay { position: absolute; inset: 0; pointer-events: none; }
+.ex-dot { position: absolute; transform: translate(-50%, -50%); min-width: 18px; height: 18px; padding: 0 3px; background: rgba(254,44,85,0.85); color: #fff; font-size: 11px; font-weight: 700; border: 1px solid #fff; border-radius: 9px; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 4px rgba(0,0,0,0.6); }
+.ex-dot.sel { background: var(--success); color: #000; transform: translate(-50%, -50%) scale(1.25); z-index: 2; }
+.explore-list { flex: 1; display: flex; flex-direction: column; gap: 5px; max-height: 420px; overflow-y: auto; }
+.ex-row { display: flex; align-items: center; gap: 5px; }
+.ex-row.sel { background: rgba(37,244,238,0.08); border-radius: var(--radius); }
+.ex-num { width: 18px; color: var(--text-secondary); font-size: 12px; text-align: right; }
+.ex-row input { padding: 4px 6px; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: 4px; font-size: 12px; }
+.ex-row .ex-label { flex: 1; min-width: 90px; }
+.ex-row .ex-x, .ex-row .ex-y { width: 56px; }
+.ex-row .ex-del { background: none; border: none; color: var(--error); cursor: pointer; font-size: 15px; }
+.explore-saved { margin-top: 12px; }
+.explore-saved pre { background: var(--bg-tertiary); padding: 10px; border-radius: var(--radius); max-height: 240px; overflow: auto; font-size: 12px; }
+@media (max-width: 720px) { .explorer-body { flex-direction: column; } }

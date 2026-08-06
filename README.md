@@ -114,6 +114,9 @@ console is reachable and see discovered devices.
   for randomised human-like times, and randomly likes/saves/comments.
 - `backend/niche.py` — the **NutriSkin** profile (description, relevant topics,
   comment style/examples). Edit this one file to retarget the campaign.
+- `backend/ui_map.py` + `ui_map.json` — the **UI map** ("learning doc"): per
+  screen, the real pixel tap points of each control on this phone, built
+  interactively via the Interface Explorer (`/analyze-ui`, `/ui-map`).
 - `backend/main.py` — FastAPI server + screenshot streaming to the browser.
 - `frontend/` — HTML/JS control panel.
 

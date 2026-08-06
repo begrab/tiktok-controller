@@ -82,6 +82,35 @@
                 </div>
             </section>
 
+            <!-- Interface Explorer -->
+            <section class="explorer-panel">
+                <h3>Interface Explorer</h3>
+                <p class="hint">Open a TikTok screen on the phone → <b>Analyze</b>. Claude marks the buttons it sees. Verify each: pick a control, then <b>click the image</b> to move its dot onto the exact spot. Set the screen type and <b>Save to map</b>. Build the map screen by screen (For You feed, search, profile, comments…).</p>
+                <div class="explorer-controls">
+                    <button id="explore-analyze" class="btn" disabled>Analyze current screen</button>
+                    <label>Screen type:
+                        <input type="text" id="explore-screen-type" placeholder="for_you_feed" list="screen-types">
+                    </label>
+                    <datalist id="screen-types">
+                        <option value="for_you_feed"><option value="following_feed"><option value="profile">
+                        <option value="search_input"><option value="search_results"><option value="explore">
+                        <option value="comments_sheet"><option value="share_sheet"><option value="inbox_dm">
+                        <option value="live"><option value="settings">
+                    </datalist>
+                    <button id="explore-save" class="btn-small" disabled>Save to map</button>
+                </div>
+                <div class="explorer-body">
+                    <div id="explore-canvas" class="explore-canvas">
+                        <p class="placeholder">Analyze a screen to begin</p>
+                    </div>
+                    <div id="explore-list" class="explore-list"></div>
+                </div>
+                <details class="explore-saved">
+                    <summary>Saved UI map</summary>
+                    <pre id="explore-map">{}</pre>
+                </details>
+            </section>
+
             <!-- Comment Section -->
             <section class="comment-panel">
                 <h3>AI Comments</h3>

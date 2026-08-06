@@ -21,6 +21,7 @@ class TikTokController {
         this.updateConnectionStatus(true);
         // Reconnect to a campaign that's already running (e.g. after a refresh).
         this.pollCampaign();
+        this.loadUiMap();
     }
 
     // API Methods
@@ -449,6 +450,122 @@ class TikTokController {
         }
     }
 
+    // Interface Explorer — map TikTok's UI to real pixel coordinates
+    async exploreAnalyze() {
+        if (!this.selectedDevice) return;
+        if (!this.config.has_anthropic_key) {
+            this.showToast('Anthropic API key not configured', 'error');
+            this.openModal();
+            return;
+        }
+        const btn = document.getElementById('explore-analyze');
+        btn.disabled = true; btn.textContent = 'Analyzing…';
+        try {
+            const r = await this.api(`/devices/${this.selectedDevice.device_id}/analyze-ui`, 'POST');
+            this._explore = {
+                screenshot: r.screenshot, imgw: r.imgw || 608, imgh: r.imgh || 1080,
+                elements: (r.elements || []).map(e => ({
+                    label: e.label, x: e.x, y: e.y, kind: e.kind || 'icon'
+                })),
+                selected: null
+            };
+            document.getElementById('explore-screen-type').value = r.screen_type || '';
+            document.getElementById('explore-save').disabled = false;
+            this.renderExplore();
+        } catch (error) {
+            console.error('Analyze UI failed:', error);
+        } finally {
+            btn.disabled = false; btn.textContent = 'Analyze current screen';
+        }
+    }
+
+    renderExplore() {
+        const ex = this._explore;
+        if (!ex) return;
+        const dots = ex.elements.map((el, i) =>
+            `<div class="ex-dot ${ex.selected === i ? 'sel' : ''}" data-i="${i}" ` +
+            `style="left:${el.x / ex.imgw * 100}%;top:${el.y / ex.imgh * 100}%">${i + 1}</div>`
+        ).join('');
+        document.getElementById('explore-canvas').innerHTML =
+            `<div class="ex-imgwrap"><img src="data:image/jpeg;base64,${ex.screenshot}" alt="screen">` +
+            `<div class="ex-overlay">${dots}</div></div>`;
+
+        const rows = ex.elements.map((el, i) =>
+            `<div class="ex-row ${ex.selected === i ? 'sel' : ''}" data-i="${i}">` +
+            `<span class="ex-num">${i + 1}</span>` +
+            `<input class="ex-label" data-i="${i}" value="${this.escapeHtml(el.label || '')}">` +
+            `<input class="ex-x" type="number" data-i="${i}" value="${el.x}">` +
+            `<input class="ex-y" type="number" data-i="${i}" value="${el.y}">` +
+            `<button class="ex-pick btn-small" data-i="${i}">pick</button>` +
+            `<button class="ex-del" data-i="${i}">×</button></div>`
+        ).join('');
+        document.getElementById('explore-list').innerHTML =
+            rows + `<button id="explore-add" class="btn-small">+ add control</button>`;
+    }
+
+    updateExploreDot(i) {
+        const ex = this._explore;
+        const dot = document.querySelector(`.ex-dot[data-i="${i}"]`);
+        if (dot && ex.elements[i]) {
+            dot.style.left = ex.elements[i].x / ex.imgw * 100 + '%';
+            dot.style.top = ex.elements[i].y / ex.imgh * 100 + '%';
+        }
+    }
+
+    exploreCanvasClick(e) {
+        const ex = this._explore;
+        if (!ex || ex.selected == null) return;
+        const img = document.querySelector('#explore-canvas img');
+        if (!img) return;
+        const rect = img.getBoundingClientRect();
+        if (e.clientX < rect.left || e.clientX > rect.right ||
+            e.clientY < rect.top || e.clientY > rect.bottom) return;
+        ex.elements[ex.selected].x = Math.round((e.clientX - rect.left) / rect.width * ex.imgw);
+        ex.elements[ex.selected].y = Math.round((e.clientY - rect.top) / rect.height * ex.imgh);
+        this.renderExplore();
+    }
+
+    exploreListInput(e) {
+        const ex = this._explore; if (!ex) return;
+        const t = e.target, i = parseInt(t.dataset.i);
+        if (isNaN(i) || !ex.elements[i]) return;
+        if (t.classList.contains('ex-label')) ex.elements[i].label = t.value;
+        else if (t.classList.contains('ex-x')) { ex.elements[i].x = parseInt(t.value) || 0; this.updateExploreDot(i); }
+        else if (t.classList.contains('ex-y')) { ex.elements[i].y = parseInt(t.value) || 0; this.updateExploreDot(i); }
+    }
+
+    exploreListClick(e) {
+        const ex = this._explore; if (!ex) return;
+        const t = e.target;
+        if (t.classList.contains('ex-pick')) { ex.selected = parseInt(t.dataset.i); this.renderExplore(); }
+        else if (t.classList.contains('ex-del')) { ex.elements.splice(parseInt(t.dataset.i), 1); ex.selected = null; this.renderExplore(); }
+        else if (t.id === 'explore-add') {
+            ex.elements.push({ label: 'new_control', x: Math.round(ex.imgw / 2), y: Math.round(ex.imgh / 2), kind: 'icon' });
+            ex.selected = ex.elements.length - 1; this.renderExplore();
+        }
+    }
+
+    async exploreSave() {
+        const ex = this._explore; if (!ex) return;
+        const screen = document.getElementById('explore-screen-type').value.trim();
+        if (!screen) { this.showToast('Enter a screen type first', 'warning'); return; }
+        const elements = {};
+        ex.elements.forEach(el => { if (el.label) elements[el.label] = [el.x, el.y]; });
+        try {
+            await this.api('/ui-map', 'POST', { screen_type: screen, elements, imgw: ex.imgw, imgh: ex.imgh });
+            this.showToast(`Saved "${screen}" to map`, 'success');
+            this.loadUiMap();
+        } catch (error) {
+            console.error('Save UI map failed:', error);
+        }
+    }
+
+    loadUiMap() {
+        this.api('/ui-map').then(m => {
+            document.getElementById('explore-map').textContent = JSON.stringify(m, null, 2);
+        }).catch(() => {});
+    }
+
     // NutriSkin Campaign
     async startCampaign() {
         if (!this.selectedDevice) return;
@@ -654,7 +771,7 @@ class TikTokController {
 
     updateActionButtons() {
         const hasDevice = !!this.selectedDevice;
-        document.querySelectorAll('.action-btn, #generate-comments, #post-comment, #analyze-video, #toggle-stream, #take-screenshot, #agent-step, #agent-run, #manual-send, .manual-key, #campaign-start').forEach(btn => {
+        document.querySelectorAll('.action-btn, #generate-comments, #post-comment, #analyze-video, #toggle-stream, #take-screenshot, #agent-step, #agent-run, #manual-send, .manual-key, #campaign-start, #explore-analyze').forEach(btn => {
             btn.disabled = !hasDevice;
         });
     }
@@ -733,6 +850,13 @@ class TikTokController {
         // AI Agent
         document.getElementById('agent-step').addEventListener('click', () => this.agentStep());
         document.getElementById('agent-run').addEventListener('click', () => this.agentRun());
+
+        // Interface Explorer
+        document.getElementById('explore-analyze').addEventListener('click', () => this.exploreAnalyze());
+        document.getElementById('explore-save').addEventListener('click', () => this.exploreSave());
+        document.getElementById('explore-canvas').addEventListener('click', (e) => this.exploreCanvasClick(e));
+        document.getElementById('explore-list').addEventListener('input', (e) => this.exploreListInput(e));
+        document.getElementById('explore-list').addEventListener('click', (e) => this.exploreListClick(e));
 
         // NutriSkin Campaign
         document.getElementById('campaign-start').addEventListener('click', () => this.startCampaign());

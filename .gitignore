@@ -48,3 +48,6 @@ logs/
 
 # Local config
 config.local.py
+
+# Per-phone UI map (built locally via the Interface Explorer)
+backend/ui_map.json

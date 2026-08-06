@@ -435,6 +435,106 @@ class TikTokAgent:
                 }
         return {"on_feed": False, "screen": "unknown", "relevant": False, "reason": "no plan returned", "comment": ""}
 
+    # ------------------------------------------------ UI exploration ---------
+    # Interactive mapping: Claude looks at the current screen and reports the
+    # controls it sees with pixel tap points, which the user verifies/corrects
+    # and saves into the UI map. This is how we learn THIS phone's TikTok layout
+    # instead of guessing fractional coordinates.
+
+    DESCRIBE_TOOL = [
+        {
+            "name": "describe_screen",
+            "description": "Report the TikTok screen type and every interactive UI control visible, each with a pixel tap point.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "screen_type": {
+                        "type": "string",
+                        "description": "One of: for_you_feed, following_feed, profile, search_input, search_results, explore, comments_sheet, share_sheet, inbox_dm, live, settings, other.",
+                    },
+                    "description": {"type": "string", "description": "One line on what this screen is."},
+                    "elements": {
+                        "type": "array",
+                        "description": "Each interactive control visible.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {
+                                    "type": "string",
+                                    "description": "Canonical snake_case name, e.g. like_button, comment_button, share_button, save_button, repost_button, profile_avatar, follow_button, for_you_tab, following_tab, live_tab, search_icon, back_arrow, close_button, home_tab, friends_tab, inbox_tab, profile_tab, comment_input, post_button, caption.",
+                                },
+                                "x": {"type": "integer", "description": "x pixel of the tap point."},
+                                "y": {"type": "integer", "description": "y pixel of the tap point."},
+                                "kind": {"type": "string", "enum": ["icon", "text", "tab", "button", "other"]},
+                            },
+                            "required": ["label", "x", "y"],
+                        },
+                    },
+                },
+                "required": ["screen_type", "description", "elements"],
+            },
+        }
+    ]
+
+    async def analyze_ui(self, device_id: str) -> dict:
+        """Vision + OCR pass that maps the current screen's controls to pixels."""
+        perception = await self.perceive(device_id)
+        if perception.get("error"):
+            return {"error": perception["error"]}
+
+        device = await self.controller.get_device(device_id)
+        w = (device.imgw or device.width) if device else 0
+        h = (device.imgh or device.height) if device else 0
+
+        elements = perception.get("elements", [])
+        ocr_text = (
+            "OCR text elements as 'text @ [x,y]' (reuse these exact coordinates "
+            "for any labelled control):\n"
+            + "\n".join(f"- {e['text']} @ {e['centre']}" for e in elements)
+            if elements else "No OCR text available; estimate positions from the image."
+        )
+        system = (
+            "You are mapping the TikTok app's interface on a phone so an "
+            f"automation can navigate reliably. The screenshot is {w} pixels wide "
+            f"and {h} pixels tall; give every coordinate in that pixel space "
+            "(origin top-left). Identify the screen_type and list every "
+            "interactive control you can see, each with a precise tap point. For "
+            "controls that have OCR text, reuse that exact [x,y]. For icons "
+            "(heart, speech bubble, arrow, avatar, tab-bar icons) estimate the "
+            "centre of the tappable icon as accurately as you can. Use canonical "
+            "snake_case labels. Call describe_screen."
+        )
+        content: list[dict] = []
+        if perception.get("screenshot_b64"):
+            content.append(
+                {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": "image/jpeg", "data": perception["screenshot_b64"]},
+                }
+            )
+        content.append({"type": "text", "text": f"{ocr_text}\n\nMap this screen."})
+
+        client = self.controller.ai.client
+        resp = await client.messages.create(
+            model=self.config.anthropic_model,
+            max_tokens=1500,
+            system=system,
+            tools=self.DESCRIBE_TOOL,
+            tool_choice={"type": "tool", "name": "describe_screen"},
+            messages=[{"role": "user", "content": content}],
+        )
+        result = {"screen_type": "other", "description": "", "elements": []}
+        for block in resp.content:
+            if block.type == "tool_use":
+                data = dict(block.input or {})
+                result["screen_type"] = data.get("screen_type", "other")
+                result["description"] = data.get("description", "")
+                result["elements"] = data.get("elements", [])
+        result["screenshot"] = perception.get("screenshot_b64")
+        result["imgw"] = w
+        result["imgh"] = h
+        return result
+
     # ------------------------------------------------ vision recovery --------
     # Blind fixed-coordinate taps are dangerous (top-left = LIVE, wrong bottom
     # tab = DMs/profile), so recovery is vision-guided: Claude looks at the stuck
