@@ -736,6 +736,27 @@ class TikTokController {
         }
     }
 
+    // Tap Test — click the live view; the phone taps that exact coordinate
+    async previewTap(e) {
+        if (!this.selectedDevice) return;
+        const img = document.querySelector('#device-preview img');
+        if (!img) { this.showToast('Start the stream or take a screenshot first', 'warning'); return; }
+        const rect = img.getBoundingClientRect();
+        if (e.clientX < rect.left || e.clientX > rect.right ||
+            e.clientY < rect.top || e.clientY > rect.bottom) return;
+        const w = this.selectedDevice.width || 608;
+        const h = this.selectedDevice.height || 1080;
+        const x = Math.round((e.clientX - rect.left) / rect.width * w);
+        const y = Math.round((e.clientY - rect.top) / rect.height * h);
+        document.getElementById('tap-readout').textContent = `tapped ${x}, ${y}`;
+        try {
+            const r = await this.api(`/devices/${this.selectedDevice.device_id}/tap`, 'POST', { x, y });
+            if (!r.success) this.showToast(r.message || 'Tap failed', 'error');
+        } catch (error) {
+            console.error('Tap failed:', error);
+        }
+    }
+
     // UI Calibration
     startCalibration(element) {
         this.calibrationMode = element;
@@ -900,6 +921,8 @@ class TikTokController {
         document.getElementById('device-preview').addEventListener('click', (e) => {
             if (this.calibrationMode) {
                 this.handleCalibrationClick(e);
+            } else if (document.getElementById('tap-mode').checked) {
+                this.previewTap(e);
             }
         });
 

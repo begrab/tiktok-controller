@@ -788,3 +788,7 @@ select:focus, input:focus {
 .explore-saved { margin-top: 12px; }
 .explore-saved pre { background: var(--bg-tertiary); padding: 10px; border-radius: var(--radius); max-height: 240px; overflow: auto; font-size: 12px; }
 @media (max-width: 720px) { .explorer-body { flex-direction: column; } }
+
+/* Tap test */
+.tap-mode-label { display: inline-flex; align-items: center; gap: 4px; font-size: 0.85em; color: var(--text-secondary); }
+.tap-readout { font-size: 0.8em; color: var(--success); font-family: monospace; }

@@ -131,6 +131,11 @@ class UIMapSave(BaseModel):
     imgh: int = 0
 
 
+class TapRequest(BaseModel):
+    x: int
+    y: int
+
+
 class ManualTypeRequest(BaseModel):
     text: str
 
@@ -301,6 +306,55 @@ async def generate_comments(device_id: str, request: GenerateCommentRequest):
         raise HTTPException(status_code=400, detail="Anthropic API key not configured")
     comments = await controller.generate_comment_options(device_id, count=request.count)
     return {"comments": comments}
+
+
+# -------------------------------------------------------- tap test / debug ----
+def _jpeg_size(data: bytes):
+    """Return (width, height) of a JPEG by reading its SOF marker, or None."""
+    i, n = 2, len(data)
+    while i < n - 9:
+        if data[i] != 0xFF:
+            i += 1
+            continue
+        marker = data[i + 1]
+        if 0xC0 <= marker <= 0xC3:
+            h = (data[i + 5] << 8) | data[i + 6]
+            w = (data[i + 7] << 8) | data[i + 8]
+            return (w, h)
+        if 0xD0 <= marker <= 0xD9 or marker == 0x01:
+            i += 2
+            continue
+        i += 2 + ((data[i + 2] << 8) | data[i + 3])
+    return None
+
+
+@app.post("/api/devices/{device_id}/tap")
+async def tap(device_id: str, req: TapRequest):
+    """Tap an exact pixel -- used by the frontend Tap Test to verify coordinates."""
+    try:
+        await client.click(device_id, req.x, req.y)
+        return {"success": True, "x": req.x, "y": req.y}
+    except IMouseError as exc:
+        return {"success": False, "message": str(exc)}
+
+
+@app.get("/api/devices/{device_id}/screenshot-info")
+async def screenshot_info(device_id: str):
+    """Compare the screenshot's real JPEG size to the device's imgw/imgh tap
+    space -- if they differ, mapped coordinates won't match taps."""
+    device = registry.get(device_id)
+    try:
+        raw = await controller.get_screenshot_bytes(device_id)
+    except IMouseError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    size = _jpeg_size(raw)
+    return {
+        "jpeg_width": size[0] if size else None,
+        "jpeg_height": size[1] if size else None,
+        "imgw": device.imgw if device else None,
+        "imgh": device.imgh if device else None,
+        "match": bool(size and device and size == (device.imgw, device.imgh)),
+    }
 
 
 # ---------------------------------------------------- manual keyboard input ---
