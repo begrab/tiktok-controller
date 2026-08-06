@@ -306,6 +306,18 @@ class TikTokController:
                 pass
         await asyncio.sleep(self.config.action_delay)
 
+    async def _comment_sheet_open(self, device_id: str) -> bool:
+        """True if the comment sheet is showing (its header/CTA text is visible)."""
+        try:
+            hits = await self.api.find_text(
+                device_id,
+                ["Kommentar", "Kommentare", "Comments", "Comment", "Kommentieren"],
+                similarity=0.7,
+            )
+            return bool(hits)
+        except IMouseError:
+            return False  # OCR unavailable -- caller falls back to best-effort
+
     async def open_comments(
         self, device_id: str, point: Optional[tuple[int, int]] = None
     ) -> ActionResult:
@@ -369,10 +381,18 @@ class TikTokController:
         if not comment:
             return ActionResult.fail("No comment text available")
 
-        # Open the comment sheet and focus the input field.
-        if not (await self.open_comments(device_id, point=comment_button_point)).success:
+        # Open the comment sheet and focus the input field. A single tap on the
+        # icon occasionally doesn't register, so verify the sheet opened (its
+        # header text appears) and retry once before giving up.
+        opened = False
+        for _ in range(2):
+            await self.open_comments(device_id, point=comment_button_point)
+            await asyncio.sleep(self.config.action_delay)
+            if await self._comment_sheet_open(device_id):
+                opened = True
+                break
+        if not opened:
             return ActionResult.fail("Could not open comments")
-        await asyncio.sleep(self.config.action_delay)
         ci = self._mapped("comment_input", "comments_sheet")
         if ci:
             await self._click(device_id, *ci)
