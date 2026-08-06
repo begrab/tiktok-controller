@@ -50,12 +50,21 @@ NICHE = {
     # How comments should read. The model writes a NEW comment per video, so
     # this is style guidance, not a script.
     "comment_style": (
-        "Write like a real person casually sharing their own experience in a "
-        "comment, then naturally mention NutriSkin as the thing that helped you "
-        "find your food triggers / clear your skin. It must sound genuine and "
-        "off-the-cuff, never like an ad. 1-2 short sentences, lowercase-casual "
-        "is fine, at most one emoji. No links, no @mentions, no hashtags. Tie it "
-        "to what THIS specific video is about. Every comment must be different."
+        "Write as a real person leaving a comment that opens with a bit of your "
+        "OWN STRUGGLE with skin/acne -- a specific, personal detail (years of "
+        "hormonal breakouts, cystic acne that wouldn't quit, trying every "
+        "topical and giving up, skin flaring after dairy, crying-in-the-mirror "
+        "kind of honesty) -- and then, only after that, naturally mention that "
+        "NutriSkin was what finally helped, tied to a real feature you'd bring up "
+        "in passing (scanning food for its Skin Score, the gut-health recipes, "
+        "the daily selfie tracker showing the before/after). It should read as a "
+        "relatable confession that happens to recommend the app, NEVER as an ad. "
+        "Vary the struggle, the angle, the wording, the length, and which feature "
+        "you mention every single time -- no two comments should share a phrase "
+        "or structure. 1-2 short sentences, lowercase-casual is fine, at most one "
+        "emoji, and only sometimes. No links, no @mentions, no hashtags, no "
+        "'check out'/'try'/'link in bio' ad phrasing. Tie it to what THIS "
+        "specific video is about so it clearly belongs under that post."
     ),
 
     # Tone examples ONLY -- the model must not copy these, just match the vibe.

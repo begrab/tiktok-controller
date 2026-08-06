@@ -99,7 +99,14 @@ class Config:
             # Independent per-action chances on a RELEVANT video.
             "like_probability": 0.85,
             "save_probability": 0.5,
-            "comment_probability": 0.4,
+            # Commenting is deliberately SPARSE so it never looks spammy: a
+            # comment is only considered once the cooldown has passed (this many
+            # relevant videos since the last comment, randomized), then fires with
+            # this probability, and never more than the per-run cap. Comments are
+            # always unique, personal-struggle stories (see niche.comment_style).
+            "comment_probability": 0.7,       # chance WHEN eligible (cooldown passed)
+            "comment_min_gap": [6, 12],        # relevant videos between comments
+            "comment_max_per_session": 8,      # hard cap per campaign run
             # Watch time (seconds) ranges: [min, max]; a "long" tail fires with
             # its chance for the occasional deep-watch / longer glance.
             "watch_relevant": [8.0, 32.0],

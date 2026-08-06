@@ -142,6 +142,8 @@ class TikTokAgent:
             "last_screenshot": None,   # b64 of the most recent frame, for the UI
             "off_feed_streak": 0,      # consecutive off-feed cycles (escalates recovery)
             "error_streak": 0,         # consecutive perceive errors (device offline etc.)
+            "videos_since_comment": 999,  # relevant videos since the last comment
+            "comment_gap": 0,          # randomized cooldown target (set on first use)
         }
 
     # --------------------------------------------------------- perceive ------
@@ -922,17 +924,27 @@ class TikTokAgent:
             return self._rand(*c["watch_irrelevant_long"])
         return self._rand(*c["watch_irrelevant"])
 
-    def _pick_actions(self, has_comment: bool) -> list[str]:
+    def _pick_actions(self, has_comment: bool, comment_allowed: bool) -> list[str]:
         c = self.config.campaign
         actions = []
         if random.random() < c["like_probability"]:
             actions.append("like")
         if random.random() < c["save_probability"]:
             actions.append("save")
-        if has_comment and random.random() < c["comment_probability"]:
+        if has_comment and comment_allowed and random.random() < c["comment_probability"]:
             actions.append("comment")
         random.shuffle(actions)  # vary the order too
         return actions
+
+    def _comment_allowed(self) -> bool:
+        """Sparse, non-spammy commenting: only once the randomized cooldown has
+        passed and under the per-run cap."""
+        st, c = self._campaign, self.config.campaign
+        if st["stats"]["comments"] >= c.get("comment_max_per_session", 8):
+            return False
+        if st["comment_gap"] <= 0:  # first time -- set an initial cooldown target
+            st["comment_gap"] = random.randint(*c["comment_min_gap"])
+        return st["videos_since_comment"] >= st["comment_gap"]
 
     async def _sleep(self, seconds: float) -> None:
         """Cancellable sleep: wakes early when a stop is requested."""
@@ -1057,12 +1069,16 @@ class TikTokAgent:
 
         # Relevant: watch part of the time, engage, linger, then move on.
         st["stats"]["relevant"] += 1
+        st["videos_since_comment"] += 1
         watch = self._watch_relevant()
         await self._sleep(watch * self._rand(0.3, 0.6))
 
         # Decide engagement up front so a slideshow can browse to the end when
         # we're going to comment (per requirement), or a random subset otherwise.
-        planned = self._pick_actions(has_comment=bool(plan["comment"]))
+        planned = self._pick_actions(
+            has_comment=bool(plan["comment"]),
+            comment_allowed=self._comment_allowed(),
+        )
         slides_viewed = 0
         if plan.get("post_type") == "photo_slideshow":
             slides_viewed = await self._browse_slideshow(
@@ -1101,6 +1117,10 @@ class TikTokAgent:
                     st["stats"]["comments"] += 1
                     st["used_comments"].append(plan["comment"])
                     done.append("comment")
+                    # Reset the cooldown to a fresh randomized gap so comments
+                    # stay spread out and never cluster into something spammy.
+                    st["videos_since_comment"] = 0
+                    st["comment_gap"] = random.randint(*c["comment_min_gap"])
             await self._sleep(self._rand(*c["between_actions"]))
 
         await self._sleep(self._watch_relevant_remainder(watch))
