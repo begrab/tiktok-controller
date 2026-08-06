@@ -545,6 +545,85 @@ class TikTokController {
         }
     }
 
+    // ---------------------------------------------- Mirror re-cast calibration
+    async mirrorOpenCC() {
+        try {
+            const r = await this.api('/mirror/open-cc', 'POST');
+            this._mirror = { screenshot: r.screenshot, imgw: r.imgw || 608, imgh: r.imgh || 1080,
+                             device_id: r.device_id, marking: null, btn: null, recv: null };
+            this.renderMirror();
+            document.getElementById('mirror-pick-btn').disabled = false;
+            this.showToast('Control Center opened — click the Screen Mirroring button', 'info');
+        } catch (e) { console.error(e); }
+    }
+
+    mirrorPick(which) {
+        if (!this._mirror) return;
+        this._mirror.marking = which;
+        this.showToast(which === 'btn' ? 'Click the Screen Mirroring button on the image'
+                                       : 'Click your PC in the receiver list', 'info');
+    }
+
+    mirrorCanvasClick(e) {
+        const m = this._mirror;
+        if (!m || !m.marking) return;
+        const img = document.querySelector('#mirror-canvas img');
+        if (!img) return;
+        const rect = img.getBoundingClientRect();
+        if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return;
+        const x = Math.round((e.clientX - rect.left) / rect.width * m.imgw);
+        const y = Math.round((e.clientY - rect.top) / rect.height * m.imgh);
+        if (m.marking === 'btn') m.btn = { x, y }; else m.recv = { x, y };
+        m.marking = null;
+        this.renderMirror();
+    }
+
+    async mirrorOpenList() {
+        const m = this._mirror;
+        if (!m || !m.btn) { this.showToast('Mark the Screen Mirroring button first', 'warning'); return; }
+        try {
+            await this.api(`/devices/${m.device_id}/tap`, 'POST', { x: m.btn.x, y: m.btn.y });
+            await new Promise(r => setTimeout(r, 1600));
+            const s = await this.api(`/devices/${m.device_id}/screenshot`);
+            m.screenshot = s.screenshot;
+            this.renderMirror();
+            document.getElementById('mirror-pick-recv').disabled = false;
+            this.showToast('Receiver list open — click your PC in the list', 'info');
+        } catch (e) { console.error(e); }
+    }
+
+    async mirrorSave() {
+        const m = this._mirror;
+        if (!m || !m.btn || !m.recv) { this.showToast('Mark both points first', 'warning'); return; }
+        try {
+            await this.api('/ui-map', 'POST', {
+                screen_type: 'control_center',
+                elements: { screen_mirroring: [m.btn.x, m.btn.y], airplay_receiver: [m.recv.x, m.recv.y] },
+                imgw: m.imgw, imgh: m.imgh,
+            });
+            this.showToast('Mirror re-cast calibrated ✓', 'success');
+            this.mirrorCloseCC();
+        } catch (e) { console.error(e); }
+    }
+
+    async mirrorCloseCC() {
+        try { await this.api('/mirror/close-cc', 'POST'); } catch (e) { /* ignore */ }
+    }
+
+    renderMirror() {
+        const m = this._mirror;
+        const cv = document.getElementById('mirror-canvas');
+        if (!m || !m.screenshot) { cv.innerHTML = '<p class="placeholder">Open Control Center to begin</p>'; return; }
+        let dots = '';
+        if (m.btn) dots += `<div class="ex-dot" style="left:${m.btn.x / m.imgw * 100}%;top:${m.btn.y / m.imgh * 100}%">M</div>`;
+        if (m.recv) dots += `<div class="ex-dot ex-dot-recv" style="left:${m.recv.x / m.imgw * 100}%;top:${m.recv.y / m.imgh * 100}%">PC</div>`;
+        cv.innerHTML = `<div class="ex-imgwrap"><img src="data:image/jpeg;base64,${m.screenshot}" alt="cc">${dots}</div>`;
+        document.getElementById('mirror-btn-pt').textContent = m.btn ? `${m.btn.x},${m.btn.y}` : '—';
+        document.getElementById('mirror-recv-pt').textContent = m.recv ? `${m.recv.x},${m.recv.y}` : '—';
+        document.getElementById('mirror-open-list').disabled = !m.btn;
+        document.getElementById('mirror-save').disabled = !(m.btn && m.recv);
+    }
+
     async exploreSave() {
         const ex = this._explore; if (!ex) return;
         const screen = document.getElementById('explore-screen-type').value.trim();
@@ -891,6 +970,15 @@ class TikTokController {
         document.getElementById('explore-canvas').addEventListener('click', (e) => this.exploreCanvasClick(e));
         document.getElementById('explore-list').addEventListener('input', (e) => this.exploreListInput(e));
         document.getElementById('explore-list').addEventListener('click', (e) => this.exploreListClick(e));
+
+        // Mirror Re-cast Calibration
+        document.getElementById('mirror-open-cc').addEventListener('click', () => this.mirrorOpenCC());
+        document.getElementById('mirror-pick-btn').addEventListener('click', () => this.mirrorPick('btn'));
+        document.getElementById('mirror-open-list').addEventListener('click', () => this.mirrorOpenList());
+        document.getElementById('mirror-pick-recv').addEventListener('click', () => this.mirrorPick('recv'));
+        document.getElementById('mirror-save').addEventListener('click', () => this.mirrorSave());
+        document.getElementById('mirror-close').addEventListener('click', () => this.mirrorCloseCC());
+        document.getElementById('mirror-canvas').addEventListener('click', (e) => this.mirrorCanvasClick(e));
 
         // NutriSkin Campaign
         document.getElementById('campaign-start').addEventListener('click', () => this.startCampaign());

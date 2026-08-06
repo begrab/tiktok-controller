@@ -481,6 +481,39 @@ async def mirror_calibrate():
     }
 
 
+@app.post("/api/mirror/open-cc")
+async def mirror_open_cc():
+    """Open iOS Control Center (over USB) and return a screenshot, for the visual
+    mirror-calibration panel to mark the Screen Mirroring button on."""
+    online = registry.online_devices
+    if not online:
+        raise HTTPException(status_code=404, detail="No online device")
+    did = online[0].device_id
+    device = registry.get(did)
+    await client.send_key(did, fn_key="ControlBar")
+    await asyncio.sleep(1.3)
+    try:
+        shot = await controller.get_screenshot_b64(did)
+    except IMouseError as exc:
+        raise HTTPException(status_code=502, detail=f"screenshot failed: {exc}")
+    return {
+        "screenshot": shot,
+        "device_id": did,
+        "imgw": (device.imgw or device.width) if device else 0,
+        "imgh": (device.imgh or device.height) if device else 0,
+    }
+
+
+@app.post("/api/mirror/close-cc")
+async def mirror_close_cc():
+    """Close Control Center (Home)."""
+    online = registry.online_devices
+    if not online:
+        raise HTTPException(status_code=404, detail="No online device")
+    await client.send_key(online[0].device_id, fn_key="WIN+h")
+    return {"ok": True}
+
+
 @app.get("/api/mirror/status")
 async def mirror_status():
     """Report whether the mirror is up (a screenshot works) and whether re-cast

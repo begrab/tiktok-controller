@@ -116,6 +116,24 @@
                 </details>
             </section>
 
+            <!-- Mirror Re-cast Calibration -->
+            <section class="mirror-panel">
+                <h3>Mirror Re-cast Calibration</h3>
+                <p class="hint">Teach the agent to restore a dropped screen mirror. Do this <b>once</b>, while mirroring works. Steps: <b>1</b> Open Control Center → <b>2</b> click the <i>Screen Mirroring</i> button on the image → <b>3</b> Open receiver list → <b>4</b> click your <i>PC</i> in the list → <b>5</b> Save.</p>
+                <div class="mirror-controls">
+                    <button id="mirror-open-cc" class="btn-small">1. Open Control Center</button>
+                    <button id="mirror-pick-btn" class="btn-small" disabled>2. Mark: Screen Mirroring</button>
+                    <button id="mirror-open-list" class="btn-small" disabled>3. Open receiver list</button>
+                    <button id="mirror-pick-recv" class="btn-small" disabled>4. Mark: PC receiver</button>
+                    <button id="mirror-save" class="btn-small" disabled>5. Save</button>
+                    <button id="mirror-close" class="btn-small">Close CC</button>
+                </div>
+                <p class="hint" id="mirror-hintline">Screen Mirroring: <span id="mirror-btn-pt">—</span> · PC receiver: <span id="mirror-recv-pt">—</span></p>
+                <div id="mirror-canvas" class="explore-canvas">
+                    <p class="placeholder">Open Control Center to begin</p>
+                </div>
+            </section>
+
             <!-- Comment Section -->
             <section class="comment-panel">
                 <h3>AI Comments</h3>
