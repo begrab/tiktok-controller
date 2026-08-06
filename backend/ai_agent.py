@@ -325,6 +325,11 @@ class TikTokAgent:
                             "type": "string",
                             "description": "A short plain-language description of what is actually on screen right now (e.g. 'For You video about baking', 'profile page of @user, Reposts tab', 'comment sheet open').",
                         },
+                        "post_type": {
+                            "type": "string",
+                            "enum": ["video", "photo_slideshow", "none"],
+                            "description": "When on_feed: 'photo_slideshow' if the post is a photo carousel (multiple images with small slide-indicator dots near the bottom-centre, sometimes a slide counter like 1/5), otherwise 'video'. 'none' when not on a feed post.",
+                        },
                         "relevant": {
                             "type": "boolean",
                             "description": "Only when on_feed: is the video's TOPIC relevant to the niche? An off-topic playing video is on_feed=true, relevant=false (we'll swipe past it).",
@@ -361,8 +366,10 @@ class TikTokAgent:
             "chat, or any menu/dialog. Note: a Follow button, a like/comment count, "
             "and a @username appear on NORMAL feed videos too -- they do NOT mean "
             "it's a profile page. A profile page specifically shows a GRID of video "
-            "thumbnails and tabs like Videos/Reposts/Liked. Always fill in 'screen' "
-            "with what you see.",
+            "thumbnails and tabs like Videos/Reposts/Liked. A photo SLIDESHOW post "
+            "(a carousel of images with small slide-indicator dots near the "
+            "bottom-centre) is STILL on_feed=TRUE -- set post_type='photo_slideshow' "
+            "for it. Always fill in 'screen' with what you see.",
             f"\n{NICHE['name']} is: {NICHE['description']}",
             "\nA video is RELEVANT if it relates to any of: "
             + "; ".join(NICHE["relevant_topics"])
@@ -429,11 +436,12 @@ class TikTokAgent:
                 return {
                     "on_feed": bool(data.get("on_feed")),
                     "screen": (data.get("screen") or "").strip(),
+                    "post_type": data.get("post_type") or "",
                     "relevant": bool(data.get("relevant")),
                     "reason": data.get("reason", ""),
                     "comment": (data.get("comment") or "").strip(),
                 }
-        return {"on_feed": False, "screen": "unknown", "relevant": False, "reason": "no plan returned", "comment": ""}
+        return {"on_feed": False, "screen": "unknown", "post_type": "", "relevant": False, "reason": "no plan returned", "comment": ""}
 
     # ------------------------------------------------ UI exploration ---------
     # Interactive mapping: Claude looks at the current screen and reports the
@@ -450,7 +458,7 @@ class TikTokAgent:
                 "properties": {
                     "screen_type": {
                         "type": "string",
-                        "description": "One of: for_you_feed, following_feed, profile, search_input, search_results, explore, comments_sheet, share_sheet, inbox_dm, live, settings, other.",
+                        "description": "One of: for_you_feed, slideshow_feed (a photo carousel post with slide-indicator dots), following_feed, profile, search_input, search_results, explore, comments_sheet, share_sheet, inbox_dm, live, settings, other.",
                     },
                     "description": {"type": "string", "description": "One line on what this screen is."},
                     "elements": {
@@ -461,7 +469,7 @@ class TikTokAgent:
                             "properties": {
                                 "label": {
                                     "type": "string",
-                                    "description": "Canonical snake_case name, e.g. like_button, comment_button, share_button, save_button, repost_button, profile_avatar, follow_button, for_you_tab, following_tab, live_tab, search_icon, back_arrow, close_button, home_tab, friends_tab, inbox_tab, profile_tab, comment_input, post_button, caption.",
+                                    "description": "Canonical snake_case name, e.g. like_button, comment_button, share_button, save_button, repost_button, profile_avatar, follow_button, for_you_tab, following_tab, live_tab, search_icon, back_arrow, close_button, home_tab, friends_tab, inbox_tab, profile_tab, comment_input, post_button, caption, slide_indicator (the dots showing which slide of a photo slideshow you're on).",
                                 },
                                 "x": {"type": "integer", "description": "x pixel of the tap point."},
                                 "y": {"type": "integer", "description": "y pixel of the tap point."},
@@ -711,8 +719,8 @@ class TikTokAgent:
             watch = self._watch_irrelevant()
             await self._sleep(watch)
             await self.controller.swipe_next(device_id)
-            return {"on_feed": True, "screen": plan["screen"], "relevant": False,
-                    "reason": plan["reason"], "actions": [], "watch": round(watch, 1)}
+            return {"on_feed": True, "screen": plan["screen"], "post_type": plan.get("post_type", ""),
+                    "relevant": False, "reason": plan["reason"], "actions": [], "watch": round(watch, 1)}
 
         # Relevant: watch part of the time, engage, linger, then move on.
         st["stats"]["relevant"] += 1
@@ -746,6 +754,7 @@ class TikTokAgent:
         return {
             "on_feed": True,
             "screen": plan["screen"],
+            "post_type": plan.get("post_type", ""),
             "relevant": True,
             "reason": plan["reason"],
             "actions": done,

@@ -566,6 +566,16 @@ class TikTokController {
         }).catch(() => {});
     }
 
+    async copyUiMap() {
+        try {
+            const m = await this.api('/ui-map');
+            await navigator.clipboard.writeText(JSON.stringify(m, null, 2));
+            this.showToast('UI map copied — paste it in chat', 'success');
+        } catch (error) {
+            this.showToast('Copy failed (clipboard blocked)', 'error');
+        }
+    }
+
     // NutriSkin Campaign
     async startCampaign() {
         if (!this.selectedDevice) return;
@@ -637,6 +647,7 @@ class TikTokController {
             const acts = (e.actions || []).length ? ` [${e.actions.join(', ')}]` : '';
             const w = e.watch ? ` (${e.watch}s)` : '';
             let line = `- ${tag}${acts}${w}`;
+            if (e.post_type === 'photo_slideshow') line += ' | slideshow';
             if (e.screen) line += ` | screen: ${e.screen}`;
             if (e.recovery) line += ` | recover: ${e.recovery}`;
             if (e.reason) line += ` | reason: ${e.reason}`;
@@ -682,7 +693,8 @@ class TikTokController {
                 else if (e.relevant === false) { cls = 'skip'; tag = 'skip'; }
                 else { cls = 'fail'; tag = 'error'; }
                 const acts = (e.actions || []).length ? ` [${e.actions.join(', ')}]` : '';
-                const meta = e.watch ? ` <span class="campaign-meta">(${e.watch}s)</span>` : '';
+                const slide = e.post_type === 'photo_slideshow' ? ' <span class="campaign-meta">📷 slideshow</span>' : '';
+                const meta = (e.watch ? ` <span class="campaign-meta">(${e.watch}s)</span>` : '') + slide;
                 // Show what was ACTUALLY on screen, per Claude, next to the action.
                 const screen = e.screen ? `<span class="campaign-screen">screen: ${this.escapeHtml(e.screen)}</span>` : '';
                 const rec = e.recovery ? `<span class="agent-msg">↩ ${this.escapeHtml(e.recovery)}</span>` : '';
@@ -854,6 +866,7 @@ class TikTokController {
         // Interface Explorer
         document.getElementById('explore-analyze').addEventListener('click', () => this.exploreAnalyze());
         document.getElementById('explore-save').addEventListener('click', () => this.exploreSave());
+        document.getElementById('explore-copy-map').addEventListener('click', () => this.copyUiMap());
         document.getElementById('explore-canvas').addEventListener('click', (e) => this.exploreCanvasClick(e));
         document.getElementById('explore-list').addEventListener('input', (e) => this.exploreListInput(e));
         document.getElementById('explore-list').addEventListener('click', (e) => this.exploreListClick(e));
