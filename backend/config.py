@@ -93,6 +93,11 @@ class Config:
             "watch_irrelevant_long_chance": 0.10,
             # Small human gap between chained engagement actions.
             "between_actions": [0.6, 2.2],
+            # Photo slideshows: browse some slides (all when commenting). Swipe
+            # direction to advance a slide -- flip to "left" if slides go backward.
+            "slideshow_swipe_direction": "right",
+            "slide_dwell": [1.5, 4.0],       # pause on each slide
+            "slideshow_max_slides": 8,       # cap when the total is unknown
         }
     )
 

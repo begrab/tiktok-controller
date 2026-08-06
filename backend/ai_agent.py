@@ -672,6 +672,45 @@ class TikTokAgent:
         while time.monotonic() < end and not self._campaign["stop"]:
             await asyncio.sleep(min(0.5, end - time.monotonic()))
 
+    # -------------------------------------------------- slideshow browsing ---
+    @staticmethod
+    def _slide_count(perception: dict) -> Optional[int]:
+        """Read the total slide count from an 'N/M' indicator in the OCR."""
+        import re
+        for el in perception.get("elements", []):
+            m = re.search(r"\b\d+\s*/\s*(\d+)\b", el.get("text", ""))
+            if m:
+                total = int(m.group(1))
+                if 2 <= total <= 20:
+                    return total
+        return None
+
+    async def _browse_slideshow(self, device_id: str, perception: dict, view_all: bool) -> int:
+        """Swipe through a photo slideshow's slides. All of them when ``view_all``
+        (we're about to comment), otherwise a random subset. Returns slides viewed.
+        """
+        c = self.config.campaign
+        direction = c.get("slideshow_swipe_direction", "right")
+        total = self._slide_count(perception)
+        if view_all:
+            count = (total - 1) if total else c["slideshow_max_slides"]
+        else:
+            upper = (total - 1) if total else 4
+            count = random.randint(1, max(1, upper))
+        count = min(count, c["slideshow_max_slides"])
+
+        viewed = 0
+        for _ in range(count):
+            if self._campaign["stop"]:
+                break
+            try:
+                await self.controller.api.swipe(device_id, direction, 0.6)
+            except IMouseError:
+                break
+            viewed += 1
+            await self._sleep(self._rand(*c["slide_dwell"]))
+        return viewed
+
     # ---------------------------------------------------- per-video flow -----
     async def _campaign_video(self, device_id: str) -> dict:
         st = self._campaign
@@ -727,8 +766,17 @@ class TikTokAgent:
         watch = self._watch_relevant()
         await self._sleep(watch * self._rand(0.3, 0.6))
 
+        # Decide engagement up front so a slideshow can browse to the end when
+        # we're going to comment (per requirement), or a random subset otherwise.
+        planned = self._pick_actions(has_comment=bool(plan["comment"]))
+        slides_viewed = 0
+        if plan.get("post_type") == "photo_slideshow":
+            slides_viewed = await self._browse_slideshow(
+                device_id, perception, view_all=("comment" in planned)
+            )
+
         done = []
-        for action in self._pick_actions(has_comment=bool(plan["comment"])):
+        for action in planned:
             if st["stop"]:
                 break
             if action == "like":
@@ -757,7 +805,7 @@ class TikTokAgent:
             "post_type": plan.get("post_type", ""),
             "relevant": True,
             "reason": plan["reason"],
-            "actions": done,
+            "actions": (done + [f"viewed {slides_viewed} slides"]) if slides_viewed else done,
             "comment": plan["comment"] if "comment" in done else "",
             "watch": round(watch, 1),
         }

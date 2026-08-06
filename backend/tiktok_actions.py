@@ -20,6 +20,7 @@ from ai_comments import AICommentGenerator, VideoContext, encode_jpeg
 from api_client import IMouseClient, IMouseError
 from config import Config
 from device_manager import Device, DeviceRegistry
+from ui_map import get_point
 
 logger = logging.getLogger("tiktok")
 
@@ -55,6 +56,11 @@ class TikTokController:
     async def _coords(self, device: Device, ui_key: str) -> tuple[int, int]:
         ui = self.config.tiktok_ui.get(ui_key, {"x": 0.5, "y": 0.5})
         return device.to_pixels(ui["x"], ui["y"])
+
+    def _mapped(self, label: str, screen: str = "for_you_feed") -> Optional[tuple[int, int]]:
+        """Exact tap point from the user-built UI map, or None if not mapped."""
+        pt = get_point(screen, label)
+        return (int(pt[0]), int(pt[1])) if pt else None
 
     # ---------------------------------------------------------- screenshots ---
     async def get_screenshot_bytes(self, device_id: str) -> bytes:
@@ -136,11 +142,17 @@ class TikTokController:
             return ActionResult.fail(str(exc))
 
     async def like_video(self, device_id: str, use_double_tap: bool = True) -> ActionResult:
+        # Prefer the exact heart icon from the UI map (reliable single tap).
+        pt = self._mapped("like_button")
+        if pt:
+            result = await self._click(device_id, *pt)
+            result.message = "Liked" if result.success else result.message
+            return result
+
         device = await self.get_device(device_id)
         if not device:
             return ActionResult.fail("Device not found")
-
-        if use_double_tap:
+        if use_double_tap:  # fallback: double-tap the video centre
             x, y = await self._coords(device, "video_center")
             try:
                 await self.api.click(device_id, x, y)
@@ -149,37 +161,45 @@ class TikTokController:
                 return ActionResult.ok("Liked (double-tap)")
             except IMouseError as exc:
                 return ActionResult.fail(str(exc))
-
         x, y = await self._coords(device, "like_button")
         result = await self._click(device_id, x, y)
         result.message = "Liked" if result.success else result.message
         return result
 
     async def save_video(self, device_id: str) -> ActionResult:
-        """Open the share sheet and tap the Save/bookmark entry (located by text)."""
+        """Save/bookmark the current post."""
+        # On this phone save is a direct rail button -- tap it from the map.
+        pt = self._mapped("save_button")
+        if pt:
+            result = await self._click(device_id, *pt)
+            result.message = "Saved video" if result.success else result.message
+            return result
+
+        # Fallback: open the share sheet and find the Save entry by text.
         device = await self.get_device(device_id)
         if not device:
             return ActionResult.fail("Device not found")
-
         x, y = await self._coords(device, "share_button")
         if not (await self._click(device_id, x, y)).success:
             return ActionResult.fail("Could not open share menu")
         await asyncio.sleep(self.config.action_delay)
-
-        # The Save/Favorites entry carries a text label -- find it.
         if await self._tap_text(device_id, ["Save", "Favorites", "Add to Favorites"]):
             return ActionResult.ok("Saved video")
         await self._dismiss(device_id)
         return ActionResult.fail("Save option not found (share menu text not matched)")
 
     async def repost_video(self, device_id: str) -> ActionResult:
-        """Open the share sheet and tap the Repost entry (located by text)."""
-        device = await self.get_device(device_id)
-        if not device:
-            return ActionResult.fail("Device not found")
-
-        x, y = await self._coords(device, "share_button")
-        if not (await self._click(device_id, x, y)).success:
+        """Open the share sheet (mapped) and tap the Repost entry (by text)."""
+        pt = self._mapped("share_button")
+        if pt:
+            opened = await self._click(device_id, *pt)
+        else:
+            device = await self.get_device(device_id)
+            if not device:
+                return ActionResult.fail("Device not found")
+            x, y = await self._coords(device, "share_button")
+            opened = await self._click(device_id, x, y)
+        if not opened.success:
             return ActionResult.fail("Could not open share menu")
         await asyncio.sleep(self.config.action_delay)
 
@@ -256,6 +276,9 @@ class TikTokController:
         await asyncio.sleep(self.config.action_delay)
 
     async def open_comments(self, device_id: str) -> ActionResult:
+        pt = self._mapped("comment_button")
+        if pt:
+            return await self._click(device_id, *pt)
         device = await self.get_device(device_id)
         if not device:
             return ActionResult.fail("Device not found")
@@ -316,8 +339,12 @@ class TikTokController:
         if not (await self.open_comments(device_id)).success:
             return ActionResult.fail("Could not open comments")
         await asyncio.sleep(self.config.action_delay)
-        x, y = await self._coords(device, "comment_input")
-        await self._click(device_id, x, y)
+        ci = self._mapped("comment_input", "comments_sheet")
+        if ci:
+            await self._click(device_id, *ci)
+        else:
+            x, y = await self._coords(device, "comment_input")
+            await self._click(device_id, x, y)
         await asyncio.sleep(self.config.paste_delay)
 
         entered = await self.enter_text(device_id, comment)
