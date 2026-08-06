@@ -148,9 +148,15 @@ class TikTokController:
         except IMouseError as exc:
             return ActionResult.fail(str(exc))
 
-    async def like_video(self, device_id: str, use_double_tap: bool = True) -> ActionResult:
-        # Prefer the exact heart icon from the UI map (reliable single tap).
-        pt = self._mapped("like_button")
+    async def like_video(
+        self,
+        device_id: str,
+        use_double_tap: bool = True,
+        point: Optional[tuple[int, int]] = None,
+    ) -> ActionResult:
+        # Priority: a per-frame vision-located point (adapts to the rail shifting
+        # up/down), then the static UI map, then the double-tap/anchor fallback.
+        pt = point or self._mapped("like_button")
         if pt:
             result = await self._click(device_id, *pt)
             result.message = "Liked" if result.success else result.message
@@ -173,10 +179,12 @@ class TikTokController:
         result.message = "Liked" if result.success else result.message
         return result
 
-    async def save_video(self, device_id: str) -> ActionResult:
+    async def save_video(
+        self, device_id: str, point: Optional[tuple[int, int]] = None
+    ) -> ActionResult:
         """Save/bookmark the current post."""
-        # On this phone save is a direct rail button -- tap it from the map.
-        pt = self._mapped("save_button")
+        # Priority: per-frame vision point, then the static map, then share-sheet.
+        pt = point or self._mapped("save_button")
         if pt:
             result = await self._click(device_id, *pt)
             result.message = "Saved video" if result.success else result.message
@@ -195,9 +203,11 @@ class TikTokController:
         await self._dismiss(device_id)
         return ActionResult.fail("Save option not found (share menu text not matched)")
 
-    async def repost_video(self, device_id: str) -> ActionResult:
-        """Open the share sheet (mapped) and tap the Repost entry (by text)."""
-        pt = self._mapped("share_button")
+    async def repost_video(
+        self, device_id: str, point: Optional[tuple[int, int]] = None
+    ) -> ActionResult:
+        """Open the share sheet and tap the Repost entry (by text)."""
+        pt = point or self._mapped("share_button")
         if pt:
             opened = await self._click(device_id, *pt)
         else:
@@ -282,8 +292,10 @@ class TikTokController:
             pass
         await asyncio.sleep(self.config.action_delay)
 
-    async def open_comments(self, device_id: str) -> ActionResult:
-        pt = self._mapped("comment_button")
+    async def open_comments(
+        self, device_id: str, point: Optional[tuple[int, int]] = None
+    ) -> ActionResult:
+        pt = point or self._mapped("comment_button")
         if pt:
             return await self._click(device_id, *pt)
         device = await self.get_device(device_id)
@@ -327,6 +339,7 @@ class TikTokController:
         comment: Optional[str] = None,
         use_ai: bool = True,
         ai_style: str = "friendly",
+        comment_button_point: Optional[tuple[int, int]] = None,
     ) -> ActionResult:
         """Full flow: open comments, (optionally) generate, type, and post."""
         device = await self.get_device(device_id)
@@ -343,7 +356,7 @@ class TikTokController:
             return ActionResult.fail("No comment text available")
 
         # Open the comment sheet and focus the input field.
-        if not (await self.open_comments(device_id)).success:
+        if not (await self.open_comments(device_id, point=comment_button_point)).success:
             return ActionResult.fail("Could not open comments")
         await asyncio.sleep(self.config.action_delay)
         ci = self._mapped("comment_input", "comments_sheet")

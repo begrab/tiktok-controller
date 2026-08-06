@@ -240,22 +240,34 @@ class TikTokAgent:
             return await c.swipe_next(device_id)
         if name == "swipe_previous":
             return await c.swipe_previous(device_id)
-        if name == "like":
-            return await c.like_video(device_id)
-        if name == "save":
-            return await c.save_video(device_id)
-        if name == "repost":
-            return await c.repost_video(device_id)
+        # Rail actions: locate the icons on THIS frame first so the tap tracks the
+        # (shifting) rail instead of a stale fixed pixel.
+        if name in ("like", "save", "repost", "comment"):
+            pts = await self.locate_actions(device_id)
+            label = {"like": "like_button", "save": "save_button",
+                     "repost": "share_button", "comment": "comment_button"}[name]
+            hit = pts.get(label)
+            src = f"vision@{hit}" if hit else "map"
+            if name == "like":
+                res = await c.like_video(device_id, point=hit)
+            elif name == "save":
+                res = await c.save_video(device_id, point=hit)
+            elif name == "repost":
+                res = await c.repost_video(device_id, point=hit)
+            else:
+                text = args.get("text", "")
+                if not text:
+                    return ActionResult.fail("comment called without text")
+                res = await c.comment_on_video(
+                    device_id, comment=text, use_ai=False, comment_button_point=hit
+                )
+            res.message = f"{res.message} [{src}]"
+            return res
         if name == "return_to_feed":
             perc = await self.perceive(device_id)
             move = await self.recover(device_id, perc)
             await self.apply_recovery(device_id, move)
             return ActionResult.ok(f"recover: {move.get('method')} — {move.get('note', '')}")
-        if name == "comment":
-            text = args.get("text", "")
-            if not text:
-                return ActionResult.fail("comment called without text")
-            return await c.comment_on_video(device_id, comment=text, use_ai=False)
         if name == "stop":
             return ActionResult.ok(f"Stopped: {args.get('reason', '')}")
         return ActionResult.fail(f"Unknown action: {name}")
@@ -543,6 +555,105 @@ class TikTokAgent:
         result["imgh"] = h
         return result
 
+    # ------------------------------------------- per-frame icon locating -----
+    # TikTok's right-hand action rail (avatar / like / comment / bookmark /
+    # share) SLIDES up or down depending on what's overlaid at the bottom -- a
+    # "search this video" bar, an ad CTA, a tall caption, a pinned comment. A
+    # fixed pixel from the UI map is right on one video and lands on the wrong
+    # icon on the next. So before engaging we locate the rail on THIS frame with
+    # vision; the whole rail moves together, so one call places every icon.
+
+    LOCATE_TOOL = [
+        {
+            "name": "locate_controls",
+            "description": (
+                "Report the exact pixel tap point of each action-rail control "
+                "visible on the current TikTok video."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "like_button": {"type": "array", "items": {"type": "integer"},
+                        "description": "[x, y] centre of the HEART / like icon. Omit if not visible."},
+                    "comment_button": {"type": "array", "items": {"type": "integer"},
+                        "description": "[x, y] centre of the SPEECH-BUBBLE / comment icon. Omit if not visible."},
+                    "save_button": {"type": "array", "items": {"type": "integer"},
+                        "description": "[x, y] centre of the BOOKMARK / save icon. Omit if not visible."},
+                    "share_button": {"type": "array", "items": {"type": "integer"},
+                        "description": "[x, y] centre of the SHARE / arrow icon. Omit if not visible."},
+                },
+            },
+        }
+    ]
+
+    async def locate_actions(
+        self, device_id: str, perception: Optional[dict] = None
+    ) -> dict:
+        """Vision-locate the right-rail icons on the current frame.
+
+        Returns ``{label: (x, y)}`` for whichever of like/comment/save/share are
+        found. Reuses ``perception``'s screenshot when given (no extra capture).
+        Returns ``{}`` on any failure -- callers then fall back to the UI map.
+        """
+        if perception is None:
+            perception = await self.perceive(device_id)
+        shot = perception.get("screenshot_b64")
+        if not shot:
+            return {}
+
+        device = await self.controller.get_device(device_id)
+        w = (device.imgw or device.width) if device else 0
+        h = (device.imgh or device.height) if device else 0
+
+        elements = perception.get("elements", [])
+        ocr_hint = (
+            "OCR text with positions (the small NUMBER under each icon is its "
+            "count -- the icon sits just ABOVE its count):\n"
+            + "\n".join(f"- {e['text']} @ {e['centre']}" for e in elements)
+            if elements else "No OCR text available; read the icons from the image."
+        )
+        system = (
+            f"The screenshot is {w} pixels wide and {h} pixels tall; give every "
+            "coordinate in that exact pixel space (origin top-left). Find the "
+            "vertical ACTION RAIL on the RIGHT edge of a TikTok video: from top "
+            "to bottom it is the round profile avatar, then the HEART (like), the "
+            "SPEECH BUBBLE (comment), the BOOKMARK (save), and the SHARE arrow. "
+            "This rail slides up or down between videos depending on bottom "
+            "overlays, so read the real position from THIS image -- do not assume "
+            "fixed spots. Return the centre [x, y] of each icon you can clearly "
+            "see; omit any that are not visible. Call locate_controls."
+        )
+        content: list[dict] = [
+            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": shot}},
+            {"type": "text", "text": f"{ocr_hint}\n\nLocate the action-rail icons."},
+        ]
+        client = self.controller.ai.client
+        try:
+            resp = await client.messages.create(
+                model=self.config.anthropic_model,
+                max_tokens=400,
+                system=system,
+                tools=self.LOCATE_TOOL,
+                tool_choice={"type": "tool", "name": "locate_controls"},
+                messages=[{"role": "user", "content": content}],
+            )
+        except Exception as exc:  # noqa: BLE001 - never let locating break a step
+            logger.warning("locate_actions failed: %s", exc)
+            return {}
+
+        points: dict[str, tuple[int, int]] = {}
+        for block in resp.content:
+            if block.type == "tool_use":
+                data = dict(block.input or {})
+                for label in ("like_button", "comment_button", "save_button", "share_button"):
+                    xy = data.get(label)
+                    if isinstance(xy, (list, tuple)) and len(xy) == 2:
+                        x, y = int(xy[0]), int(xy[1])
+                        # Sanity: inside the frame and in the right-hand rail zone.
+                        if w and h and 0 <= x <= w and 0 <= y <= h and x > w * 0.6:
+                            points[label] = (x, y)
+        return points
+
     # ------------------------------------------------ vision recovery --------
     # Blind fixed-coordinate taps are dangerous (top-left = LIVE, wrong bottom
     # tab = DMs/profile), so recovery is vision-guided: Claude looks at the stuck
@@ -775,21 +886,33 @@ class TikTokAgent:
                 device_id, perception, view_all=("comment" in planned)
             )
 
+        # Locate the action rail on this frame once (it shifts per video); reuse
+        # the plan's screenshot so there's no extra capture. All engagement taps
+        # for this video use these live coordinates, falling back to the map.
+        pts = {}
+        if planned:
+            pts = await self.locate_actions(device_id, perception)
+
         done = []
         for action in planned:
             if st["stop"]:
                 break
             if action == "like":
-                if (await self.controller.like_video(device_id)).success:
+                if (await self.controller.like_video(
+                    device_id, point=pts.get("like_button")
+                )).success:
                     st["stats"]["likes"] += 1
                     done.append("like")
             elif action == "save":
-                if (await self.controller.save_video(device_id)).success:
+                if (await self.controller.save_video(
+                    device_id, point=pts.get("save_button")
+                )).success:
                     st["stats"]["saves"] += 1
                     done.append("save")
             elif action == "comment":
                 res = await self.controller.comment_on_video(
-                    device_id, comment=plan["comment"], use_ai=False
+                    device_id, comment=plan["comment"], use_ai=False,
+                    comment_button_point=pts.get("comment_button"),
                 )
                 if res.success:
                     st["stats"]["comments"] += 1
