@@ -380,6 +380,39 @@ async def debug_ocr():
     return {"ocr_running": True, "code": 0, "elements": len(items), "sample": sample}
 
 
+@app.get("/api/debug/rail")
+async def debug_rail():
+    """Show exactly how the rail locator sees the current frame.
+
+    Returns every right-edge OCR element (the candidate counts), which ones were
+    treated as counts, and the icon points the locator computed. Open this on a
+    frame where a tap missed to see why the like/comment mapping was off.
+    """
+    online = registry.online_devices
+    if not online:
+        raise HTTPException(status_code=404, detail="No online device")
+    device_id = online[0].device_id
+    device = registry.get(device_id)
+    w = (device.imgw or device.width) if device else 0
+    h = (device.imgh or device.height) if device else 0
+
+    perception = await agent.perceive(device_id)
+    right_edge = [
+        {"text": e["text"], "centre": e["centre"], "is_count": agent._is_count(e["text"])}
+        for e in perception.get("elements", [])
+        if e["centre"][0] > w * 0.85
+    ]
+    right_edge.sort(key=lambda e: e["centre"][1])
+    points = agent._ocr_rail_points(perception, w, h)
+    return {
+        "imgw": w,
+        "imgh": h,
+        "right_edge_elements": right_edge,
+        "computed_icon_points": {k: list(v) for k, v in points.items()},
+        "locate_source_would_be": "ocr" if points.get("like_button") else "vision",
+    }
+
+
 @app.get("/api/devices/{device_id}/screenshot-info")
 async def screenshot_info(device_id: str):
     """Compare the screenshot's real JPEG size to the device's imgw/imgh tap
