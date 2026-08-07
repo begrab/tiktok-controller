@@ -345,6 +345,31 @@ class TikTokController:
                 pass
         await asyncio.sleep(self.config.action_delay)
 
+    async def _find_comment_input(self, device_id: str) -> Optional[tuple[int, int]]:
+        """Locate the 'Add comment' input BAR (bottom of the sheet) so we type a
+        top-level comment -- not a reply on an existing comment. Returns the tap
+        point, or None if the placeholder text isn't found."""
+        try:
+            hits = await self.api.find_text(
+                device_id,
+                ["Kommentar hinzufügen", "Kommentar hinzu", "hinzufügen",
+                 "Sag etwas Nettes", "Add comment", "Kommentieren"],
+                similarity=0.55,
+            )
+        except IMouseError:
+            return None
+        device = await self.get_device(device_id)
+        h = (device.imgh or device.height) if device else 1080
+        best = None
+        for hit in hits:
+            c = hit.get("centre") or hit.get("center")
+            # The input bar is in the LOWER part of the screen; ignore the
+            # "Kommentare N" header at the top of the sheet.
+            if c and len(c) == 2 and c[1] > h * 0.6:
+                if best is None or c[1] > best[1]:
+                    best = (int(c[0]), int(c[1]))
+        return best
+
     async def _comment_sheet_open(self, device_id: str) -> bool:
         """True if the comment sheet is showing (its header/CTA text is visible)."""
         try:
@@ -445,21 +470,30 @@ class TikTokController:
         if not comment:
             return ActionResult.fail("No comment text available")
 
-        # Open the comment sheet and focus the input field. A single tap on the
-        # icon occasionally doesn't register, so verify the sheet opened (its
-        # header text appears) and retry once before giving up.
+        # Open the comment sheet. We only re-tap the comment ICON if the sheet is
+        # still closed (tapping it again while OPEN would hit a comment in the
+        # sheet and start a REPLY). Prefer the real "Add comment" input bar,
+        # located by its placeholder text, so we post a TOP-LEVEL comment.
         opened = False
+        input_pt: Optional[tuple[int, int]] = None
         for _ in range(2):
-            await self.open_comments(device_id, point=comment_button_point)
-            await asyncio.sleep(self.config.action_delay)
-            if await self._comment_sheet_open(device_id):
+            input_pt = await self._find_comment_input(device_id)
+            if input_pt or await self._comment_sheet_open(device_id):
                 opened = True
                 break
+            await self.open_comments(device_id, point=comment_button_point)
+            await asyncio.sleep(self.config.action_delay)
+        if not opened:
+            input_pt = await self._find_comment_input(device_id)
+            opened = bool(input_pt) or await self._comment_sheet_open(device_id)
         if not opened:
             return ActionResult.fail("Could not open comments")
-        ci = self._mapped("comment_input", "comments_sheet")
-        if ci:
-            await self._click(device_id, *ci)
+
+        # Tap the located input bar; fall back to the mapped/anchor point.
+        if not input_pt:
+            input_pt = self._mapped("comment_input", "comments_sheet")
+        if input_pt:
+            await self._click(device_id, *input_pt)
         else:
             x, y = await self._coords(device, "comment_input")
             await self._click(device_id, x, y)
