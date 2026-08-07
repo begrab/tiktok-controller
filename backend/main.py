@@ -274,14 +274,27 @@ async def swipe_previous(device_id: str):
     return _result(await controller.swipe_previous(device_id))
 
 
+async def _rail_point(device_id: str, label: str):
+    """Vision-locate one rail icon on the current frame (the accurate anchoring
+    the campaign uses), so manual buttons hit the same spot -- not stale config
+    fractions where 'comment' lands on the save icon."""
+    try:
+        pts = await agent.locate_actions(device_id)
+        return pts.get(label)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 @app.post("/api/devices/{device_id}/like")
 async def like_video(device_id: str, double_tap: bool = True):
-    return _result(await controller.like_video(device_id, use_double_tap=double_tap))
+    pt = await _rail_point(device_id, "like_button")
+    return _result(await controller.like_video(device_id, use_double_tap=double_tap, point=pt))
 
 
 @app.post("/api/devices/{device_id}/save")
 async def save_video(device_id: str):
-    return _result(await controller.save_video(device_id))
+    pt = await _rail_point(device_id, "save_button")
+    return _result(await controller.save_video(device_id, point=pt))
 
 
 @app.post("/api/devices/{device_id}/follow")
@@ -291,11 +304,13 @@ async def follow_creator(device_id: str):
 
 @app.post("/api/devices/{device_id}/comment")
 async def comment_on_video(device_id: str, request: CommentRequest):
+    pt = await _rail_point(device_id, "comment_button")
     res = await controller.comment_on_video(
         device_id,
         comment=request.comment,
         use_ai=request.use_ai,
         ai_style=request.ai_style,
+        comment_button_point=pt,
     )
     return _result(res)
 
