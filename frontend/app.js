@@ -664,10 +664,12 @@ class TikTokController {
             return;
         }
         const minutes = parseInt(document.getElementById('campaign-minutes').value) || 30;
+        const language = (document.getElementById('campaign-language')?.value || '').trim();
         try {
             await this.api('/campaign/start', 'POST', {
                 device_id: this.selectedDevice.device_id,
-                duration_minutes: minutes
+                duration_minutes: minutes,
+                language: language || null
             });
             this.showToast(`Campaign started (${minutes} min)`, 'success');
             document.getElementById('campaign-log').innerHTML = '';
@@ -914,6 +916,18 @@ class TikTokController {
 
     // Event Binding
     bindEvents() {
+        // Advanced tools toggle (hides all the debug/dev panels by default)
+        const advToggle = document.getElementById('advanced-toggle');
+        if (advToggle) {
+            advToggle.addEventListener('click', () => {
+                const panels = document.getElementById('advanced-panels');
+                const show = panels.hasAttribute('hidden');
+                if (show) panels.removeAttribute('hidden'); else panels.setAttribute('hidden', '');
+                advToggle.setAttribute('aria-expanded', String(show));
+                advToggle.innerHTML = show ? '⚙ Advanced tools ▴' : '⚙ Advanced tools ▾';
+            });
+        }
+
         // Device selection
         document.getElementById('device-list').addEventListener('click', (e) => {
             const item = e.target.closest('.device-item');

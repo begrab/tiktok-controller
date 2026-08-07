@@ -122,6 +122,7 @@ class AIAgentRequest(BaseModel):
 class CampaignRequest(BaseModel):
     device_id: str
     duration_minutes: float = 30.0
+    language: Optional[str] = None
 
 
 class UIMapSave(BaseModel):
@@ -708,9 +709,14 @@ async def campaign_start(request: CampaignRequest):
         raise HTTPException(status_code=400, detail="Anthropic API key not configured")
     if agent.campaign_status()["running"]:
         raise HTTPException(status_code=409, detail="A campaign is already running")
+    # Optional per-run language override (falls back to niche.py default).
+    from niche import NICHE
+    if request.language is not None:
+        NICHE["language"] = request.language.strip()
     seconds = int(max(1.0, request.duration_minutes) * 60)
     campaign_task = asyncio.create_task(agent.campaign_loop(request.device_id, seconds))
-    return {"status": "started", "duration_minutes": request.duration_minutes}
+    return {"status": "started", "duration_minutes": request.duration_minutes,
+            "language": NICHE.get("language")}
 
 
 @app.post("/api/campaign/stop")

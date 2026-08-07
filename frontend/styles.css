@@ -794,3 +794,22 @@ select:focus, input:focus {
 /* Tap test */
 .tap-mode-label { display: inline-flex; align-items: center; gap: 4px; font-size: 0.85em; color: var(--text-secondary); }
 .tap-readout { font-size: 0.8em; color: var(--success); font-family: monospace; }
+
+/* Simple UI: Advanced tools toggle */
+.advanced-toggle-row { margin: 18px 0 8px; text-align: center; }
+#advanced-toggle { opacity: 0.85; }
+.advanced-panels { display: flex; flex-direction: column; gap: 20px; padding-top: 6px; border-top: 1px dashed var(--border); margin-top: 4px; }
+.advanced-panels[hidden] { display: none; }
+.actions-panel { }
+
+/* Simple UI layout: stacked single column (overrides the old 3-col grid) */
+.container { max-width: 1080px; }
+main { display: flex; flex-direction: column; gap: 20px; }
+.device-panel, .comment-panel, .analysis-panel { grid-column: auto; grid-row: auto; }
+.control-panel { display: flex; gap: 20px; align-items: flex-start; }
+.campaign-live { display: flex; gap: 16px; flex-wrap: wrap; }
+.campaign-snapshot { flex: 0 0 260px; }
+.campaign-snapshot img { width: 100%; border-radius: var(--radius); display: block; }
+#campaign-log { flex: 1; min-width: 280px; }
+.campaign-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+@media (max-width: 720px) { .control-panel { flex-direction: column; } .preview-container { flex: 1 1 auto; } }
