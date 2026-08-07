@@ -44,6 +44,9 @@ class Config:
     # environment; never hardcode a key.
     anthropic_api_key: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
     anthropic_model: str = os.getenv("ANTHROPIC_MODEL", DEFAULT_MODEL)
+    # Comments are rare and matter, so write them with a stronger model than the
+    # fast per-frame classifier. Override with ANTHROPIC_COMMENT_MODEL.
+    comment_model: str = os.getenv("ANTHROPIC_COMMENT_MODEL", "claude-sonnet-4-6")
 
     # OCR / find-text tuning. The bundled model is tuned for Chinese and
     # English; lower this for accented or stylised Latin text.

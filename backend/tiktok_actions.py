@@ -369,34 +369,43 @@ class TikTokController:
         x, y = await self._coords(device, "comment_button")
         return await self._click(device_id, x, y)
 
-    async def enter_text(self, device_id: str, text: str) -> ActionResult:
-        """Type ``text`` into the focused field.
+    # Transliteration for the typed fallback so German still reads correctly if
+    # the clipboard bridge is unavailable (ä->ae etc.).
+    _TRANSLIT = {
+        "ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue",
+        "á": "a", "à": "a", "â": "a", "é": "e", "è": "e", "ê": "e", "í": "i", "ì": "i",
+        "ó": "o", "ò": "o", "ô": "o", "ú": "u", "ù": "u", "ñ": "n", "ç": "c",
+        "–": "-", "—": "-", "“": '"', "”": '"', "‘": "'", "’": "'", "…": "...",
+    }
 
-        ASCII goes through ``/key/sendkey``; anything else uses the clipboard
-        paste flow (set clipboard -> brief pause -> WIN+v) so emoji and accented
-        characters survive.
+    @classmethod
+    def _to_ascii(cls, text: str) -> str:
+        out = "".join(cls._TRANSLIT.get(c, c) for c in text)
+        return "".join(c for c in out if ord(c) < 128)
+
+    async def enter_text(self, device_id: str, text: str) -> ActionResult:
+        """Enter ``text`` into the focused field.
+
+        ALWAYS prefer the clipboard paste flow (set clipboard -> pause -> WIN+v):
+        it is keyboard-LAYOUT-INDEPENDENT and preserves umlauts/emoji, whereas
+        /key/sendkey types via scancodes -- on a German (QWERTZ) phone that swaps
+        z<->y and mangles non-ASCII. Only if the clipboard bridge is unavailable
+        do we type a transliterated ASCII version so the comment still posts.
         """
-        ascii_only = all(ord(c) < 128 for c in text)
         try:
-            if ascii_only:
-                await self.api.send_key(device_id, key=text)
-            else:
-                await self.api.clipboard_set(device_id, text)
-                await asyncio.sleep(self.config.paste_delay)
-                await self.api.send_key(device_id, fn_key="WIN+v")
-            return ActionResult.ok("Text entered")
+            await self.api.clipboard_set(device_id, text)
+            await asyncio.sleep(self.config.paste_delay)
+            await self.api.send_key(device_id, fn_key="WIN+v")
+            return ActionResult.ok("Text entered (paste)")
         except IMouseError as exc:
-            # The clipboard/paste bridge failed (e.g. transport error). Fall back
-            # to the ASCII subset via /key/sendkey so the comment still posts
-            # (emoji and accented characters are dropped).
-            fallback = "".join(c for c in text if ord(c) < 128).strip()
-            if not ascii_only and fallback:
+            fallback = self._to_ascii(text).strip()
+            if fallback:
                 try:
                     await self.api.send_key(device_id, key=fallback)
-                    return ActionResult.ok("Text entered (non-ASCII dropped)")
+                    return ActionResult.ok("Text entered (typed fallback)")
                 except IMouseError:
                     pass
-            return ActionResult.fail(str(exc))
+            return ActionResult.fail(f"clipboard paste failed and no typed fallback: {exc}")
 
     async def comment_on_video(
         self,

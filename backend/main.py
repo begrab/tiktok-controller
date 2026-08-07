@@ -478,6 +478,31 @@ async def debug_rail():
     }
 
 
+@app.post("/api/debug/clipboard-test")
+async def clipboard_test():
+    """Check whether the iOS clipboard bridge works -- if it does, comments paste
+    cleanly (umlauts + no z/y swap); if not, we fall back to typed transliteration.
+    Sets a test string with umlauts and reads it back."""
+    online = registry.online_devices
+    if not online:
+        raise HTTPException(status_code=404, detail="No online device")
+    did = online[0].device_id
+    probe = "Grüße zäh yzäöü Test"
+    try:
+        await client.clipboard_set(did, probe)
+        await asyncio.sleep(0.4)
+        got = await client.clipboard_get(did)
+        readback = got.data.get("text") if hasattr(got, "data") else None
+    except IMouseError as exc:
+        return {"clipboard_bridge": False, "error": str(exc),
+                "hint": "The iOS clipboard Shortcut bridge isn't set up -- comments "
+                        "will use the typed ASCII fallback. Install/enable the iMouse "
+                        "clipboard shortcut on the phone to get perfect paste."}
+    ok = (readback or "").strip() == probe
+    return {"clipboard_bridge": ok, "sent": probe, "read_back": readback,
+            "hint": "clipboard_bridge:true means comments will paste perfectly."}
+
+
 @app.post("/api/mirror/calibrate")
 async def mirror_calibrate():
     """Calibrate the AirPlay mirror re-cast: learn the Control Center Screen

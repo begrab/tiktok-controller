@@ -501,6 +501,50 @@ class TikTokAgent:
         return {"on_feed": False, "screen": "unknown", "post_type": "", "relevant": False,
                 "reason": "no plan returned", "language": "", "comment": ""}
 
+    async def generate_campaign_comment(
+        self, perception: dict, plan: dict, used_comments: list[str]
+    ) -> str:
+        """Write ONE high-quality comment with the stronger comment model.
+
+        Decoupled from the fast per-frame classifier: it sees the video and
+        writes a natural, in-language, on-brand comment. Only called when we're
+        actually about to comment (rare), so the extra cost is negligible.
+        """
+        client = self.controller.ai.client
+        lang = plan.get("language") or NICHE.get("language") or "the video's language"
+        system = (
+            f"You write a single TikTok comment as a real person, for the {NICHE['name']} "
+            f"brand. {NICHE['name']} is a MOBILE APP: {NICHE['description']}\n\n"
+            f"Write the comment in {lang}, in flawless, natural, native-sounding "
+            "language (correct grammar, spelling, and umlauts/accents) -- it must read "
+            "like a real local wrote it, never machine-translated.\n"
+            + NICHE["comment_style"] +
+            "\nMake it clear, in passing, that NutriSkin is an APP you use (you "
+            "'scan' foods in it, 'track' your skin, follow its recipes) -- naturally, "
+            "not as an ad. Output ONLY the comment text, nothing else."
+        )
+        parts = [f"This video: {plan.get('screen', '')}. Reason it's relevant: {plan.get('reason', '')}."]
+        if used_comments:
+            parts.append("Do NOT resemble any of these earlier comments:\n- " + "\n- ".join(used_comments))
+        content: list[dict] = []
+        if perception.get("screenshot_b64"):
+            content.append({"type": "image", "source": {
+                "type": "base64", "media_type": "image/jpeg", "data": perception["screenshot_b64"]}})
+        content.append({"type": "text", "text": "\n\n".join(parts) + "\n\nWrite the comment."})
+        try:
+            resp = await client.messages.create(
+                model=self.config.comment_model,
+                max_tokens=200,
+                system=system,
+                messages=[{"role": "user", "content": content}],
+            )
+        except Exception as exc:  # noqa: BLE001 - fall back to the plan's comment
+            logger.warning("strong comment generation failed: %s", exc)
+            return (plan.get("comment") or "").strip()
+        text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text").strip()
+        # Strip surrounding quotes the model sometimes adds.
+        return text.strip('"').strip("'").strip()
+
     @staticmethod
     def _looks_live(plan: dict) -> bool:
         """A LIVE stream, from post_type or the screen description. Lives are
@@ -999,15 +1043,17 @@ class TikTokAgent:
 
     def _pick_actions(self, has_comment: bool, comment_allowed: bool) -> list[str]:
         c = self.config.campaign
-        actions = []
+        core = []
         if random.random() < c["like_probability"]:
-            actions.append("like")
+            core.append("like")
         if random.random() < c["save_probability"]:
-            actions.append("save")
+            core.append("save")
+        random.shuffle(core)  # vary like/save order
+        # Comment ALWAYS goes last: it opens the comment sheet, and running it
+        # before like/save left those taps hitting stale coordinates (Follow).
         if has_comment and comment_allowed and random.random() < c["comment_probability"]:
-            actions.append("comment")
-        random.shuffle(actions)  # vary the order too
-        return actions
+            core.append("comment")
+        return core
 
     # TikTok UI chrome that appears on EVERY feed frame -- must be excluded from
     # the post fingerprint or it dominates and makes different videos look alike
@@ -1266,7 +1312,7 @@ class TikTokAgent:
         # Decide engagement up front so a slideshow can browse to the end when
         # we're going to comment (per requirement), or a random subset otherwise.
         planned = self._pick_actions(
-            has_comment=bool(plan["comment"]),
+            has_comment=True,  # comment text is generated on demand (strong model)
             comment_allowed=self._comment_allowed(),
         )
         slides_viewed = 0
@@ -1283,6 +1329,7 @@ class TikTokAgent:
             pts = await self.locate_actions(device_id, perception)
 
         done = []
+        posted_comment = ""
         for action in planned:
             if st["stop"]:
                 break
@@ -1299,14 +1346,21 @@ class TikTokAgent:
                     st["stats"]["saves"] += 1
                     done.append("save")
             elif action == "comment":
+                # Generate the comment now, with the stronger model, in-language.
+                text = await self.generate_campaign_comment(
+                    perception, plan, st["used_comments"][-8:]
+                )
+                if not text:
+                    continue
                 res = await self.controller.comment_on_video(
-                    device_id, comment=plan["comment"], use_ai=False,
+                    device_id, comment=text, use_ai=False,
                     comment_button_point=pts.get("comment_button"),
                 )
                 if res.success:
                     st["stats"]["comments"] += 1
-                    st["used_comments"].append(plan["comment"])
+                    st["used_comments"].append(text)
                     done.append("comment")
+                    posted_comment = text
                     # Reset the cooldown to a fresh randomized gap so comments
                     # stay spread out and never cluster into something spammy.
                     st["videos_since_comment"] = 0
@@ -1324,7 +1378,7 @@ class TikTokAgent:
             "relevant": True,
             "reason": plan["reason"],
             "actions": (done + [f"viewed {slides_viewed} slides"]) if slides_viewed else done,
-            "comment": plan["comment"] if "comment" in done else "",
+            "comment": posted_comment,
             "watch": round(watch, 1),
         }
 
