@@ -380,6 +380,54 @@ async def debug_ocr():
     return {"ocr_running": True, "code": 0, "elements": len(items), "sample": sample}
 
 
+@app.post("/api/debug/swipe-test")
+async def swipe_test():
+    """Empirically find what actually advances the TikTok feed on this setup.
+
+    Tries several gestures in sequence and reports, for each, whether the video's
+    caption changed (i.e. the feed moved). Run it on a video the campaign got
+    stuck on. Whatever shows changed=true is the gesture we should use.
+    """
+    online = registry.online_devices
+    if not online:
+        raise HTTPException(status_code=404, detail="No online device")
+    did = online[0].device_id
+
+    async def caption() -> str:
+        perc = await agent.perceive(did)
+        return " ".join(sorted(agent._post_words(perc)))[:140]
+
+    async def do_swipe(direction, length):
+        await client.swipe(did, direction, length)
+
+    async def do_wheel(direction, number):
+        await client.wheel(did, direction, 0.5, number)
+
+    methods = [
+        ("swipe up 0.5", lambda: do_swipe("up", 0.5)),
+        ("swipe up 0.75", lambda: do_swipe("up", 0.75)),
+        ("swipe up 0.95", lambda: do_swipe("up", 0.95)),
+        ("swipe down 0.75", lambda: do_swipe("down", 0.75)),
+        ("wheel down x5", lambda: do_wheel("down", 5)),
+        ("wheel up x5", lambda: do_wheel("up", 5)),
+    ]
+    before = await caption()
+    prev = before
+    steps = []
+    for name, fn in methods:
+        try:
+            await fn()
+        except IMouseError as exc:
+            steps.append({"method": name, "error": str(exc)})
+            continue
+        await asyncio.sleep(1.8)  # let the mirror settle
+        after = await caption()
+        steps.append({"method": name, "changed": after != prev, "caption_after": after})
+        prev = after
+    return {"caption_before": before, "steps": steps,
+            "hint": "Whichever step(s) show changed:true is a gesture that moves the feed."}
+
+
 @app.get("/api/debug/rail")
 async def debug_rail():
     """Show exactly how the rail locator sees the current frame.
