@@ -178,6 +178,30 @@ class TikTokAgent:
 
         return result
 
+    async def settled_perception(self, device_id: str, tries: int = 3) -> dict:
+        """Perceive a STABLE frame.
+
+        The AirPlay mirror lags the phone by up to a second or two, so a capture
+        taken right after a swipe/navigation can show the *previous* video or a
+        transitional menu that's already gone -- which made the campaign mark
+        OFF-FEED while actually on the feed, or engage the wrong video. We wait
+        until two consecutive captures agree (same fingerprint) before trusting
+        the frame.
+        """
+        perc = await self.perceive(device_id)
+        for _ in range(max(0, tries - 1)):
+            if perc.get("error"):
+                return perc
+            sig1 = self._video_sig(perc)
+            await asyncio.sleep(0.7)
+            nxt = await self.perceive(device_id)
+            if nxt.get("error"):
+                return nxt
+            if self._video_sig(nxt) == sig1:
+                return nxt  # frame has settled
+            perc = nxt
+        return perc
+
     # ---------------------------------------------------------- decide -------
     async def decide(
         self, perception: dict, goal: str, history: list[str]
@@ -395,6 +419,9 @@ class TikTokAgent:
             + "; ".join(NICHE["relevant_topics"])
             + ".",
             "It is NOT relevant if it's, e.g.: " + "; ".join(NICHE["not_relevant"]) + ".",
+            "Judge relevance by the video's TOPIC, not by whether the person has "
+            "visible acne or skin marks -- someone with acne talking about moving, "
+            "cooking, or lifestyle is NOT relevant.",
             "Be reasonably strict -- when in doubt, mark it not relevant so we skip it.",
             "\nIf relevant, also write a comment. " + NICHE["comment_style"],
             f"Always spell the product name exactly as '{NICHE['name']}' -- never "
@@ -1013,7 +1040,9 @@ class TikTokAgent:
         st = self._campaign
         c = self.config.campaign
 
-        perception = await self.perceive(device_id)
+        # Wait for a settled frame -- the mirror lags the phone, so a stale
+        # transitional capture must not drive the decision.
+        perception = await self.settled_perception(device_id)
         st["last_screenshot"] = perception.get("screenshot_b64")  # live view for UI
         if perception.get("error"):
             st["stats"]["errors"] += 1

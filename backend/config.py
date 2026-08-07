@@ -82,7 +82,8 @@ class Config:
     # settings (tracking speed at max, no auto-hide) -- these just stop us from
     # racing the pointer between our own commands.
     pre_tap_settle: float = 0.18   # pause before every tap so the pointer is at rest
-    post_swipe_settle: float = 0.35  # extra rest after a swipe (it drags the pointer)
+    post_swipe_settle: float = 0.6   # rest after a swipe: pointer settles AND the
+                                     # laggy mirror catches up to the new video
 
     # Right-rail icon targeting. Each rail icon (heart/comment/bookmark/share)
     # sits directly ABOVE its count number, which OCR locates to the exact pixel.

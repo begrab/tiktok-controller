@@ -44,6 +44,11 @@ NICHE = {
         "general makeup tutorials with no skin-health angle",
         "unrelated dances, gaming, sports, pranks, memes",
         "food/cooking content with no connection to skin",
+        "a video where the creator merely HAS visible acne/skin marks but the "
+        "topic is something else (moving, kitchen, vlog, lifestyle) -- incidental "
+        "skin does NOT make it relevant; the TOPIC must be about skin/diet/gut",
+        "general wellness/self-care/mindset/'gesundheit' talk with no specific "
+        "skin, acne, diet-skin, or gut-health angle",
     ],
 
     # -------------------------------------------------------------- COMMENTS --
