@@ -45,6 +45,31 @@ class TikTokController {
         document.getElementById('grid-view').hidden = show;
         document.getElementById('dev-view').hidden = !show;
         if (!show) { this.renderGrid(); }  // returning to grid -> refresh it
+        else { this.loadRuns(); }          // entering dev -> refresh saved runs
+    }
+
+    async loadRuns() {
+        const el = document.getElementById('runs-list');
+        if (!el) return;
+        try {
+            const r = await this.api('/campaign/sessions');
+            const runs = r.sessions || [];
+            if (!runs.length) { el.innerHTML = '<p class="placeholder">No runs yet.</p>'; return; }
+            el.innerHTML = runs.map(s => {
+                const st = s.stats || {};
+                const bits = [`${s.entries || 0} steps`];
+                if (st.videos != null) bits.push(`${st.videos} videos`);
+                if (st.relevant != null) bits.push(`${st.relevant} relevant`);
+                if (st.likes != null) bits.push(`${st.likes}❤ ${st.saves||0}🔖 ${st.comments||0}💬`);
+                if (st.errors) bits.push(`${st.errors} errors`);
+                if (s.running) bits.push('(running)');
+                return `<div class="run-row">
+                    <a href="/logs-view/${encodeURIComponent(s.name)}" target="_blank">${s.name}</a>
+                    <span class="run-stats">${bits.join(' · ')}</span>
+                    <a class="run-frames" href="/logs-view/${encodeURIComponent(s.name)}" target="_blank">review ↗</a>
+                </div>`;
+            }).join('');
+        } catch (e) { el.innerHTML = '<p class="placeholder">Could not load runs.</p>'; }
     }
 
     renderGrid() {
@@ -138,7 +163,10 @@ class TikTokController {
 
     async gridScreenTap(id, e) {
         if (!this._grid.control[id]) return;
-        const img = document.querySelector(`#screen-${id} img`);
+        // NOTE: device IDs contain ':' which is invalid in a CSS id selector, so
+        // querySelector('#screen-A4:B8:..') throws/fails -- use getElementById.
+        const el = document.getElementById(`screen-${id}`);
+        const img = el && el.querySelector('img');
         if (!img) return;
         const rect = img.getBoundingClientRect();
         const dev = this.devices.find(d => d.device_id === id) || {};

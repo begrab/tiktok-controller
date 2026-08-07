@@ -831,3 +831,11 @@ main[hidden] { display: none; }   /* author 'main{display:flex}' would otherwise
 .ph-warmup.active { background: var(--error); color: #fff; }
 .ph-control.active { background: var(--success); color: #000; }
 .ph-label { font-size: 0.72em; color: var(--text-secondary); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Saved warm-up runs (Developer screen) */
+.runs-panel .runs-list { display: flex; flex-direction: column; gap: 6px; }
+.run-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--bg-secondary, #181b22); border: 1px solid var(--border, #262a33); border-radius: 8px; font-size: 0.85em; }
+.run-row > a:first-child { font-family: monospace; color: var(--accent, #6ea8fe); text-decoration: none; }
+.run-row > a:first-child:hover { text-decoration: underline; }
+.run-row .run-stats { flex: 1; color: var(--text-secondary); }
+.run-row .run-frames { color: var(--accent, #6ea8fe); text-decoration: none; white-space: nowrap; }

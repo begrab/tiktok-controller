@@ -10,7 +10,7 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -827,6 +827,63 @@ async def websocket_endpoint(websocket: WebSocket):
 frontend_path = Path(__file__).parent.parent / "frontend"
 
 
+@app.get("/api/campaign/sessions")
+async def campaign_sessions():
+    """List saved campaign runs (newest first) with their stats. Browse the raw
+    logs + frames at /logs/<session>/ ."""
+    from campaign_log import list_sessions
+    return {"sessions": list_sessions()}
+
+
+@app.get("/logs-view/{name}", response_class=HTMLResponse)
+async def campaign_session_view(name: str):
+    """A single-page review gallery for one run: every cycle's decision next to
+    the screenshot it was made on. This is the human-facing way to review a
+    warm-up and spot where the swiping/engagement went wrong."""
+    from campaign_log import read_session
+    sess = read_session(name)
+    if not sess:
+        return HTMLResponse("<h2>Run not found</h2>", status_code=404)
+    meta, summary = sess["meta"], sess["summary"]
+    head = (f"<h1>{sess['name']}</h1>"
+            f"<p>device <code>{meta.get('device','?')}</code> · "
+            f"niche <b>{meta.get('niche','?')}</b> · "
+            f"{len(sess['entries'])} steps"
+            + (f" · stats {summary.get('stats')}" if summary.get('stats') else "")
+            + "</p>")
+    cards = []
+    for e in sess["entries"]:
+        frame = e.get("frame")
+        img = (f'<img loading="lazy" src="/logs/{name}/{frame}">' if frame
+               else '<div class="noimg">no frame</div>')
+        rows = []
+        for k in ("action", "screen", "relevant", "reason", "language",
+                  "comment", "actions", "errors"):
+            if e.get(k) not in (None, "", [], {}):
+                rows.append(f"<div><span class='k'>{k}</span>{e.get(k)}</div>")
+        cards.append(
+            f"<div class='card'>{img}"
+            f"<div class='meta'><div class='i'>#{e.get('i','')}</div>"
+            + "".join(rows) + "</div></div>")
+    html = f"""<!doctype html><meta charset=utf-8>
+<title>{sess['name']}</title>
+<style>
+ body{{font:14px/1.4 system-ui,sans-serif;margin:0;background:#0f1115;color:#e6e6e6}}
+ header{{padding:16px 20px;border-bottom:1px solid #262a33;position:sticky;top:0;background:#0f1115}}
+ header a{{color:#6ea8fe}} h1{{font-size:18px;margin:0 0 4px}}
+ .wrap{{padding:16px 20px;display:flex;flex-direction:column;gap:14px;max-width:900px;margin:0 auto}}
+ .card{{display:flex;gap:16px;background:#181b22;border:1px solid #262a33;border-radius:10px;padding:12px}}
+ .card img{{width:200px;border-radius:8px;flex:0 0 auto;background:#000}}
+ .noimg{{width:200px;height:300px;display:flex;align-items:center;justify-content:center;color:#666;background:#000;border-radius:8px}}
+ .meta{{flex:1;min-width:0}} .meta .i{{font-weight:700;color:#6ea8fe;margin-bottom:6px}}
+ .meta .k{{display:inline-block;min-width:76px;color:#8b93a1;text-transform:uppercase;font-size:11px;letter-spacing:.5px}}
+ .meta div{{margin:3px 0;word-break:break-word}}
+</style>
+<header>{head}<a href="/logs/{name}/log.jsonl">raw log.jsonl</a></header>
+<div class="wrap">{''.join(cards) or '<p>No steps recorded.</p>'}</div>"""
+    return HTMLResponse(html)
+
+
 @app.get("/")
 async def serve_frontend():
     return FileResponse(frontend_path / "index.html")
@@ -834,6 +891,11 @@ async def serve_frontend():
 
 if frontend_path.exists():
     app.mount("/static", StaticFiles(directory=frontend_path), name="static")
+
+# Saved campaign logs + frames, browsable in the browser (created on first run).
+_logs_dir = Path(__file__).parent / "campaign_logs"
+_logs_dir.mkdir(exist_ok=True)
+app.mount("/logs", StaticFiles(directory=str(_logs_dir), html=False), name="logs")
 
 
 if __name__ == "__main__":

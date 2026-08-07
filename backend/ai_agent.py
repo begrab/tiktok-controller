@@ -26,6 +26,7 @@ import time
 from typing import Any, Optional
 
 from api_client import IMouseError
+from campaign_log import SessionLogger
 from niche import NICHE
 from tiktok_actions import ActionResult, TikTokController
 
@@ -146,6 +147,7 @@ class TikTokAgent:
             "comment_gap": 0,          # randomized cooldown target (set on first use)
             "engaged_posts": [],       # word-sets of posts already engaged (no re-liking)
             "next_perc": None,         # settled frame from the last advance (reused, saves a capture)
+            "log_session": None,       # folder name of this run's saved log
         }
 
     # --------------------------------------------------------- perceive ------
@@ -1391,7 +1393,11 @@ class TikTokAgent:
         st = self._campaign = self._fresh_campaign_state()
         st.update(running=True, device_id=device_id, duration=duration_seconds)
         start = time.monotonic()
-        logger.info("Campaign started on %s for %ss", device_id, duration_seconds)
+        # Persist every run (steps + frames + errors) for later review/improvement.
+        session = SessionLogger(device_id, NICHE.get("name", "run"))
+        st["log_session"] = session.name
+        logger.info("Campaign started on %s for %ss -> logs/%s",
+                    device_id, duration_seconds, session.name)
         try:
             while (time.monotonic() - start) < duration_seconds and not st["stop"]:
                 entry = await self._campaign_video(device_id)
@@ -1399,11 +1405,13 @@ class TikTokAgent:
                 st["log"].append(entry)
                 st["log"] = st["log"][-200:]
                 st["elapsed"] = round(time.monotonic() - start, 1)
+                session.log(entry, st.get("last_screenshot"))
         finally:
             st["running"] = False
             st["elapsed"] = round(time.monotonic() - start, 1)
-            logger.info("Campaign ended: %s", st["stats"])
-        return {"stats": st["stats"], "videos": st["stats"]["videos"]}
+            session.finish(st["stats"])
+            logger.info("Campaign ended: %s (logs/%s)", st["stats"], session.name)
+        return {"stats": st["stats"], "videos": st["stats"]["videos"], "session": session.name}
 
     def request_stop(self) -> None:
         self._campaign["stop"] = True
@@ -1420,4 +1428,5 @@ class TikTokAgent:
             "stats": dict(st["stats"]),
             "recent": st["log"][-40:],
             "last_screenshot": st.get("last_screenshot"),
+            "log_session": st.get("log_session"),
         }
