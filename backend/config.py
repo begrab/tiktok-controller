@@ -72,7 +72,8 @@ class Config:
     # Timing (seconds).
     action_delay: float = 0.5      # settle time between chained taps
     paste_delay: float = 0.3       # focus -> paste settle time
-    swipe_length: float = 0.6      # fraction of the screen per swipe
+    swipe_length: float = 0.8      # fraction of screen per swipe -- a firm flick;
+                                   # too short and TikTok snaps back to the same video
 
     # Relative-mouse pointer settling. The board is a RELATIVE HID mouse: the
     # console turns an absolute (x, y) into a move-from-current-position then a

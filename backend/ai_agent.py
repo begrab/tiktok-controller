@@ -991,17 +991,20 @@ class TikTokAgent:
         return inter >= 3 and inter / len(a | b) >= 0.45
 
     async def _advance_feed(self, device_id: str, current_words: set) -> None:
-        """Swipe to the next post and CONFIRM we actually moved. The feed/mirror
-        sometimes ignores a swipe, which left the campaign re-processing the same
-        video; retry until the caption changes (or we give up)."""
-        for _ in range(3):
+        """Advance to the next post -- ONE firm swipe, then confirm.
+
+        Rapid repeat swipes land mid-transition and glitch the feed back to the
+        same video, so we never fire two swipes close together: after a swipe we
+        wait for a SETTLED frame (mirror caught up), and only if it's still the
+        same post do we try once more. The cross-cycle dedup catches anything
+        that still slips through, without ever re-reacting."""
+        await self.controller.swipe_next(device_id)
+        perc = await self.settled_perception(device_id, tries=2)
+        if perc.get("error"):
+            return
+        if current_words and self._same_post(self._post_words(perc), current_words):
+            # The swipe didn't take. One more, fully settled between (no glitch).
             await self.controller.swipe_next(device_id)
-            await self._sleep(self._rand(0.8, 1.4))
-            perc = await self.perceive(device_id)
-            if perc.get("error"):
-                return  # let the next cycle handle the error/recover
-            if not self._same_post(self._post_words(perc), current_words):
-                return  # advanced to a different post
 
     def _comment_allowed(self) -> bool:
         """Sparse, non-spammy commenting: only once the randomized cooldown has
