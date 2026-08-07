@@ -74,19 +74,21 @@ async def analyze_composer(agent: TikTokAgent, shot_b64: str) -> dict:
     return {"mode": "unknown"}
 
 
-async def probe(controller: TikTokController, agent: TikTokAgent, did: str) -> dict:
-    # Open the comment sheet exactly the way the campaign does, but stop before
-    # typing/posting.
+async def probe(controller: TikTokController, agent: TikTokAgent, did: str,
+                comment_pt) -> dict:
+    # Open the comment sheet exactly the way the campaign does (vision-located
+    # comment icon), but stop before typing/posting.
     input_pt = None
     for _ in range(2):
         input_pt = await controller._find_comment_input(did)
         if input_pt or await controller._comment_sheet_open(did):
             break
-        await controller.open_comments(did)
+        await controller.open_comments(did, point=comment_pt)
         await asyncio.sleep(controller.config.action_delay)
 
     sheet_open = await controller._comment_sheet_open(did)
-    result = {"sheet_open": sheet_open, "input_found": list(input_pt) if input_pt else None}
+    result = {"sheet_open": sheet_open, "input_found": list(input_pt) if input_pt else None,
+              "comment_pt": list(comment_pt) if comment_pt else None}
     if not sheet_open:
         result["verdict"] = {"mode": "no_composer", "note": "comment sheet did not open"}
         return result
@@ -131,17 +133,33 @@ async def run(rounds: int) -> None:
 
         rows = []
         for i in range(rounds):
-            words = agent._post_words(await agent.perceive(did))
-            res = await probe(controller, agent, did)
+            perc = await agent.settled_perception(did)
+            words = agent._post_words(perc)
+            plan = await agent.plan_video(perc, [])
+
+            # Skip lives / non-feed screens (comments live elsewhere on a live);
+            # only probe real feed posts, like the campaign does.
+            if agent._looks_live(plan) or not plan.get("on_feed"):
+                print(f"round {i}: skip ({plan.get('post_type') or plan.get('screen','')[:40]})")
+                await agent._advance_feed(did, words)
+                continue
+
+            comment_pt = (await agent.locate_actions(did, perc)).get("comment_button")
+            res = await probe(controller, agent, did, comment_pt)
             res["round"] = i
             rows.append(res)
             v = res.get("verdict", {})
-            print(f"round {i}: sheet={res['sheet_open']} input={res['input_found']} "
-                  f"-> {v.get('mode')} placeholder={v.get('placeholder')!r} {v.get('note','')}")
-            await asyncio.sleep(0.5)
-            await controller.swipe_next(did)   # advance to the next video
-            await asyncio.sleep(1.4)
-            # make sure we actually moved on
+            print(f"round {i}: sheet={res['sheet_open']} comment_pt={res['comment_pt']} "
+                  f"input={res['input_found']} -> {v.get('mode')} "
+                  f"placeholder={v.get('placeholder')!r} {v.get('note','')}")
+
+            # Make sure the sheet is fully closed before advancing, or swipe_next
+            # would just scroll the comments.
+            for _ in range(3):
+                if not await controller._comment_sheet_open(did):
+                    break
+                await controller._dismiss(did)
+            await asyncio.sleep(0.4)
             await agent._advance_feed(did, words)
 
         with open("comment_test_report.json", "w", encoding="utf-8") as fh:

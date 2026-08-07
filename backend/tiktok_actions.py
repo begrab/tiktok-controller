@@ -350,11 +350,11 @@ class TikTokController:
         top-level comment -- not a reply on an existing comment. Returns the tap
         point, or None if the placeholder text isn't found."""
         try:
+            # ASCII-safe fragments (OCR mangles umlauts and truncates with '…').
             hits = await self.api.find_text(
                 device_id,
-                ["Kommentar hinzufügen", "Kommentar hinzu", "hinzufügen",
-                 "Sag etwas Nettes", "Add comment", "Kommentieren"],
-                similarity=0.55,
+                ["hinzu", "Kommentar hinzu", "Add comment", "Sag etwas", "Nettes"],
+                similarity=0.5,
             )
         except IMouseError:
             return None
@@ -363,9 +363,9 @@ class TikTokController:
         best = None
         for hit in hits:
             c = hit.get("centre") or hit.get("center")
-            # The input bar is in the LOWER part of the screen; ignore the
-            # "Kommentare N" header at the top of the sheet.
-            if c and len(c) == 2 and c[1] > h * 0.6:
+            # The input bar is at the very BOTTOM of the sheet; ignore the
+            # "Kommentare N" header and the comment list above it.
+            if c and len(c) == 2 and c[1] > h * 0.82:
                 if best is None or c[1] > best[1]:
                     best = (int(c[0]), int(c[1]))
         return best
