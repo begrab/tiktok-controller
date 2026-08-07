@@ -5,7 +5,7 @@ agent treats as relevant and how it writes comments -- nothing else needs to
 change. Keep the shape of the dict; just refine the text and lists.
 """
 
-NICHE = {
+_NUTRISKIN = {
     "name": "NutriSkin",
 
     # ------------------------------------------------------------- LANGUAGE --
@@ -84,3 +84,29 @@ NICHE = {
         "the daily selfie tracker on NutriSkin is what kept me consistent tbh",
     ],
 }
+
+
+# ---------------------------------------------------------------- registry ----
+# Add more apps/niches here (same shape as _NUTRISKIN) and they appear in the
+# per-phone dropdown automatically.
+NICHES = {
+    "NutriSkin": _NUTRISKIN,
+}
+
+# The ACTIVE niche. It's a dict that is mutated IN PLACE (never reassigned) so
+# that `from niche import NICHE` references throughout the app stay valid.
+NICHE = dict(_NUTRISKIN)
+
+
+def list_niches() -> list:
+    """Names available in the per-phone dropdown."""
+    return list(NICHES.keys())
+
+
+def set_active_niche(name: str) -> bool:
+    """Switch the active niche in place. Returns False if the name is unknown."""
+    if name in NICHES:
+        NICHE.clear()
+        NICHE.update(dict(NICHES[name]))
+        return True
+    return False

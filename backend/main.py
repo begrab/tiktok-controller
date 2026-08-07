@@ -123,6 +123,7 @@ class CampaignRequest(BaseModel):
     device_id: str
     duration_minutes: float = 30.0
     language: Optional[str] = None
+    niche: Optional[str] = None
 
 
 class UIMapSave(BaseModel):
@@ -709,8 +710,11 @@ async def campaign_start(request: CampaignRequest):
         raise HTTPException(status_code=400, detail="Anthropic API key not configured")
     if agent.campaign_status()["running"]:
         raise HTTPException(status_code=409, detail="A campaign is already running")
-    # Optional per-run language override (falls back to niche.py default).
-    from niche import NICHE
+    # Select the niche (app context) for this run, then apply the optional
+    # per-run language override on top.
+    from niche import NICHE, set_active_niche
+    if request.niche:
+        set_active_niche(request.niche)
     if request.language is not None:
         NICHE["language"] = request.language.strip()
     seconds = int(max(1.0, request.duration_minutes) * 60)
@@ -724,6 +728,23 @@ async def campaign_stop():
     """Ask the running campaign to stop at the next safe point."""
     agent.request_stop()
     return {"status": "stopping"}
+
+
+@app.get("/api/niches")
+async def get_niches():
+    """Available app/niche contexts for the per-phone dropdown."""
+    from niche import list_niches, NICHE
+    return {"niches": list_niches(), "active": NICHE.get("name")}
+
+
+@app.post("/api/devices/{device_id}/home")
+async def go_home(device_id: str):
+    """Send the phone to the iOS home screen (Home button)."""
+    try:
+        await client.send_key(device_id, fn_key="WIN+h")
+        return {"success": True}
+    except IMouseError as exc:
+        return {"success": False, "message": str(exc)}
 
 
 @app.get("/api/campaign/status")

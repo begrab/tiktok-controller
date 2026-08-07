@@ -15,13 +15,159 @@ class TikTokController {
     }
 
     async init() {
+        this._grid = { previews: {}, control: {}, niches: [], activeCampaignDevice: null };
         await this.loadConfig();
+        await this.loadNiches();
         await this.loadDevices();
         this.bindEvents();
         this.updateConnectionStatus(true);
         // Reconnect to a campaign that's already running (e.g. after a refresh).
         this.pollCampaign();
         this.loadUiMap();
+        // Build + keep the phone grid live.
+        this.renderGrid();
+        this.startGridStatusPolling();
+    }
+
+    // ------------------------------------------------------- phone grid ------
+    async loadNiches() {
+        try {
+            const r = await this.api('/niches');
+            this._grid.niches = r.niches || [];
+        } catch (e) { this._grid.niches = ['NutriSkin']; }
+    }
+
+    onlineDevices() {
+        return this.devices.filter(d => d.is_online);
+    }
+
+    toggleDevView(show) {
+        document.getElementById('grid-view').hidden = show;
+        document.getElementById('dev-view').hidden = !show;
+        if (!show) { this.renderGrid(); }  // returning to grid -> refresh it
+    }
+
+    renderGrid() {
+        const grid = document.getElementById('phone-grid');
+        if (!grid) return;
+        const online = this.onlineDevices();
+        // Stop preview loops for devices no longer present.
+        Object.keys(this._grid.previews).forEach(id => {
+            if (!online.find(d => d.device_id === id)) this.stopPreview(id);
+        });
+        if (!online.length) {
+            grid.innerHTML = '<p class="placeholder">No phones online. Connect a board + mirror, then Refresh.</p>';
+            return;
+        }
+        const opts = this._grid.niches.map(n => `<option value="${n}">${n}</option>`).join('');
+        grid.innerHTML = online.map(d => {
+            const id = d.device_id;
+            return `
+            <div class="phone-card" data-device-id="${id}">
+                <div class="phone-screen" id="screen-${id}"><span class="ph-ph">connecting…</span></div>
+                <select class="phone-niche" data-device-id="${id}">${opts}</select>
+                <div class="phone-actions">
+                    <button class="btn-small ph-warmup" data-device-id="${id}">Warm up</button>
+                    <button class="btn-small ph-home" data-device-id="${id}">Home screen</button>
+                    <button class="btn-small ph-control" data-device-id="${id}">Control</button>
+                </div>
+                <div class="ph-label">${d.name || id.slice(0,10)} · ${d.model} · ${d.width}×${d.height}</div>
+            </div>`;
+        }).join('');
+        // (Re)start previews for online phones.
+        online.forEach(d => this.startPreview(d.device_id));
+        this.refreshWarmupButtons();
+    }
+
+    startPreview(id) {
+        if (this._grid.previews[id]) return;  // already running
+        const tick = async () => {
+            try {
+                const data = await this.api(`/devices/${id}/screenshot`);
+                const el = document.getElementById(`screen-${id}`);
+                if (el && data.screenshot) {
+                    let img = el.querySelector('img');
+                    if (!img) { el.innerHTML = ''; img = document.createElement('img'); el.appendChild(img); }
+                    img.src = `data:image/jpeg;base64,${data.screenshot}`;
+                }
+            } catch (e) { /* mirror may be briefly unavailable */ }
+        };
+        tick();
+        this._grid.previews[id] = setInterval(tick, 1800);
+    }
+
+    stopPreview(id) {
+        if (this._grid.previews[id]) { clearInterval(this._grid.previews[id]); delete this._grid.previews[id]; }
+    }
+
+    async gridWarmup(id) {
+        const running = this._grid.activeCampaignDevice;
+        if (running === id) {                    // stop this phone's agent
+            try { await this.api('/campaign/stop', 'POST'); } catch (e) {}
+            this._grid.activeCampaignDevice = null;
+            this.showToast('Warm-up stopped', 'info');
+            this.refreshWarmupButtons();
+            return;
+        }
+        if (running && running !== id) {
+            this.showToast('Another phone is already warming up (one at a time for now).', 'warning');
+            return;
+        }
+        const niche = document.querySelector(`.phone-niche[data-device-id="${id}"]`)?.value;
+        try {
+            await this.api('/campaign/start', 'POST', { device_id: id, duration_minutes: 240, niche });
+            this._grid.activeCampaignDevice = id;
+            this.showToast(`Warming up for ${niche}…`, 'success');
+        } catch (e) {
+            this.showToast('Could not start (a campaign may already be running).', 'error');
+        }
+        this.refreshWarmupButtons();
+    }
+
+    async gridHome(id) {
+        try { await this.api(`/devices/${id}/home`, 'POST'); this.showToast('Sent to home screen', 'info'); }
+        catch (e) { this.showToast('Home failed', 'error'); }
+    }
+
+    gridToggleControl(id) {
+        this._grid.control[id] = !this._grid.control[id];
+        document.querySelector(`.ph-control[data-device-id="${id}"]`)?.classList.toggle('active', this._grid.control[id]);
+        const el = document.getElementById(`screen-${id}`);
+        if (el) el.classList.toggle('controllable', this._grid.control[id]);
+    }
+
+    async gridScreenTap(id, e) {
+        if (!this._grid.control[id]) return;
+        const img = document.querySelector(`#screen-${id} img`);
+        if (!img) return;
+        const rect = img.getBoundingClientRect();
+        const dev = this.devices.find(d => d.device_id === id) || {};
+        const w = dev.imgw || dev.width || 608, h = dev.imgh || dev.height || 1080;
+        const x = Math.round((e.clientX - rect.left) / rect.width * w);
+        const y = Math.round((e.clientY - rect.top) / rect.height * h);
+        try { await this.api(`/devices/${id}/tap`, 'POST', { x, y }); } catch (err) {}
+    }
+
+    startGridStatusPolling() {
+        setInterval(async () => {
+            if (document.getElementById('grid-view').hidden) return;  // only when visible
+            try {
+                const s = await this.api('/campaign/status');
+                this._grid.activeCampaignDevice = s.running ? s.device_id : null;
+                this.refreshWarmupButtons();
+            } catch (e) {}
+        }, 3000);
+    }
+
+    refreshWarmupButtons() {
+        const active = this._grid.activeCampaignDevice;
+        document.querySelectorAll('.ph-warmup').forEach(btn => {
+            const id = btn.dataset.deviceId;
+            const isThis = active === id;
+            btn.textContent = isThis ? 'Stop' : 'Warm up';
+            btn.classList.toggle('active', isThis);
+            btn.closest('.phone-card')?.classList.toggle('warming', isThis);
+        });
     }
 
     // API Methods
@@ -93,6 +239,7 @@ class TikTokController {
             const data = await this.api('/devices');
             this.devices = data.devices;
             this.renderDevices();
+            if (this._grid && !document.getElementById('grid-view').hidden) this.renderGrid();
         } catch (error) {
             console.error('Failed to load devices:', error);
         }
@@ -916,15 +1063,23 @@ class TikTokController {
 
     // Event Binding
     bindEvents() {
-        // Advanced tools toggle (hides all the debug/dev panels by default)
-        const advToggle = document.getElementById('advanced-toggle');
-        if (advToggle) {
-            advToggle.addEventListener('click', () => {
-                const panels = document.getElementById('advanced-panels');
-                const show = panels.hasAttribute('hidden');
-                if (show) panels.removeAttribute('hidden'); else panels.setAttribute('hidden', '');
-                advToggle.setAttribute('aria-expanded', String(show));
-                advToggle.innerHTML = show ? '⚙ Advanced tools ▴' : '⚙ Advanced tools ▾';
+        // Developer view toggle
+        document.getElementById('dev-toggle')?.addEventListener('click', () => this.toggleDevView(true));
+        document.getElementById('dev-back')?.addEventListener('click', () => this.toggleDevView(false));
+        document.getElementById('refresh-grid')?.addEventListener('click', async () => { await this.loadDevices(); this.renderGrid(); });
+
+        // Phone grid (event delegation on the grid container)
+        const grid = document.getElementById('phone-grid');
+        if (grid) {
+            grid.addEventListener('click', (e) => {
+                const wu = e.target.closest('.ph-warmup');
+                if (wu) return this.gridWarmup(wu.dataset.deviceId);
+                const hm = e.target.closest('.ph-home');
+                if (hm) return this.gridHome(hm.dataset.deviceId);
+                const ct = e.target.closest('.ph-control');
+                if (ct) return this.gridToggleControl(ct.dataset.deviceId);
+                const scr = e.target.closest('.phone-screen');
+                if (scr) return this.gridScreenTap(scr.id.replace('screen-', ''), e);
             });
         }
 

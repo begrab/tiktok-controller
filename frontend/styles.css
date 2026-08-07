@@ -813,3 +813,21 @@ main { display: flex; flex-direction: column; gap: 20px; }
 #campaign-log { flex: 1; min-width: 280px; }
 .campaign-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
 @media (max-width: 720px) { .control-panel { flex-direction: column; } .preview-container { flex: 1 1 auto; } }
+
+/* ---- Phone grid (main view) ---- */
+main[hidden] { display: none; }   /* author 'main{display:flex}' would otherwise beat [hidden] */
+.grid-head { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+.grid-head h2 { margin: 0; }
+.phone-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 20px; }
+.phone-card { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.phone-card.warming { border-color: var(--success); box-shadow: inset 0 0 0 1px var(--success); }
+.phone-screen { width: 100%; aspect-ratio: 9/16; background: var(--bg-tertiary); border-radius: var(--radius); overflow: hidden; display: flex; align-items: center; justify-content: center; position: relative; }
+.phone-screen img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.phone-screen.controllable { outline: 2px solid var(--success); outline-offset: -2px; cursor: crosshair; }
+.ph-ph { color: var(--text-secondary); font-size: 0.85em; }
+.phone-niche { width: 100%; padding: 8px; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius); }
+.phone-actions { display: flex; gap: 6px; }
+.phone-actions .btn-small { flex: 1; }
+.ph-warmup.active { background: var(--error); color: #fff; }
+.ph-control.active { background: var(--success); color: #000; }
+.ph-label { font-size: 0.72em; color: var(--text-secondary); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

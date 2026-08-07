@@ -12,11 +12,30 @@
             <h1>TikTok Controller</h1>
             <div class="status-bar">
                 <span id="connection-status" class="status disconnected">Disconnected</span>
+                <button id="dev-toggle" class="btn-small">Developer</button>
                 <button id="settings-btn" class="icon-btn" title="Settings">&#9881;</button>
             </div>
         </header>
 
-        <main>
+        <!-- ============================ PHONE GRID (main) ==================== -->
+        <main id="grid-view">
+            <div class="grid-head">
+                <h2>Phones</h2>
+                <button id="refresh-grid" class="btn-small">Refresh</button>
+            </div>
+            <p class="hint">Each connected phone shows below. Pick the app it should work for, then <b>Warm up</b> to start the agent. <b>Home screen</b> returns to the iOS home. <b>Control</b> lets you tap the phone with your mouse.</p>
+            <div id="phone-grid" class="phone-grid">
+                <p class="placeholder">Looking for connected phones…</p>
+            </div>
+        </main>
+
+        <!-- ============================ DEVELOPER VIEW ====================== -->
+        <main id="dev-view" hidden>
+            <div class="grid-head">
+                <button id="dev-back" class="btn-small">&#8592; Back to phones</button>
+                <h2>Developer tools</h2>
+            </div>
+
             <!-- Device Selection -->
             <section class="device-panel">
                 <div class="panel-header">
@@ -25,28 +44,6 @@
                 </div>
                 <div id="device-list" class="device-list">
                     <p class="placeholder">Loading devices...</p>
-                </div>
-            </section>
-
-            <!-- Campaign (primary) -->
-            <section class="campaign-panel">
-                <h3>Campaign</h3>
-                <p class="hint">Runs autonomously: watches relevant videos for varied times, skips the rest fast, and randomly likes / saves / comments on on-brand content. Comments are unique, personal, and in the feed language.</p>
-                <div class="campaign-controls">
-                    <label>Language: <input type="text" id="campaign-language" placeholder="German" style="width:120px"></label>
-                    <label>Minutes: <input type="number" id="campaign-minutes" value="30" min="1" max="240"></label>
-                    <button id="campaign-start" class="btn" disabled>Start Campaign</button>
-                    <button id="campaign-stop" class="btn-small" style="display:none;">Stop</button>
-                    <button id="campaign-copy" class="btn-small">Copy log</button>
-                </div>
-                <div id="campaign-status" class="campaign-status"></div>
-                <div class="campaign-live">
-                    <div id="campaign-snapshot" class="campaign-snapshot">
-                        <p class="placeholder">Live view</p>
-                    </div>
-                    <div id="campaign-log" class="agent-log">
-                        <p class="placeholder">Campaign activity will appear here</p>
-                    </div>
                 </div>
             </section>
 
@@ -65,160 +62,139 @@
                 </div>
             </section>
 
-            <!-- Advanced toggle -->
-            <div class="advanced-toggle-row">
-                <button id="advanced-toggle" class="btn-small" aria-expanded="false">&#9881; Advanced tools &#9662;</button>
-            </div>
+            <!-- Quick Actions -->
+            <section class="actions-panel">
+                <h3>Quick Actions</h3>
+                <div class="action-grid">
+                    <button id="action-swipe-up" class="action-btn" disabled><span class="action-icon">&#8593;</span><span>Next Video</span></button>
+                    <button id="action-swipe-down" class="action-btn" disabled><span class="action-icon">&#8595;</span><span>Previous</span></button>
+                    <button id="action-like" class="action-btn" disabled><span class="action-icon">&#9829;</span><span>Like</span></button>
+                    <button id="action-save" class="action-btn" disabled><span class="action-icon">&#9734;</span><span>Save</span></button>
+                    <button id="action-follow" class="action-btn" disabled><span class="action-icon">&#43;</span><span>Follow</span></button>
+                    <button id="action-comment" class="action-btn" disabled><span class="action-icon">&#128172;</span><span>Comment</span></button>
+                </div>
+                <div class="batch-actions" id="batch-actions" style="display: none;">
+                    <h4>Batch Actions (All Selected)</h4>
+                    <div class="batch-buttons">
+                        <button id="batch-swipe" class="btn-small">Swipe All</button>
+                        <button id="batch-like" class="btn-small">Like All</button>
+                    </div>
+                </div>
+            </section>
 
-            <!-- Everything else -- preserved, hidden by default -->
-            <div id="advanced-panels" class="advanced-panels" hidden>
+            <!-- Campaign (detailed) -->
+            <section class="campaign-panel">
+                <h3>Campaign (detailed)</h3>
+                <p class="hint">Same agent as "Warm up", with explicit language/minutes control on the selected device.</p>
+                <div class="campaign-controls">
+                    <label>Language: <input type="text" id="campaign-language" placeholder="German" style="width:120px"></label>
+                    <label>Minutes: <input type="number" id="campaign-minutes" value="30" min="1" max="240"></label>
+                    <button id="campaign-start" class="btn" disabled>Start Campaign</button>
+                    <button id="campaign-stop" class="btn-small" style="display:none;">Stop</button>
+                    <button id="campaign-copy" class="btn-small">Copy log</button>
+                </div>
+                <div id="campaign-status" class="campaign-status"></div>
+                <div class="campaign-live">
+                    <div id="campaign-snapshot" class="campaign-snapshot"><p class="placeholder">Live view</p></div>
+                    <div id="campaign-log" class="agent-log"><p class="placeholder">Campaign activity will appear here</p></div>
+                </div>
+            </section>
 
-                <!-- Quick Actions -->
-                <section class="actions-panel">
-                    <h3>Quick Actions</h3>
-                    <div class="action-grid">
-                        <button id="action-swipe-up" class="action-btn" disabled>
-                            <span class="action-icon">&#8593;</span><span>Next Video</span>
-                        </button>
-                        <button id="action-swipe-down" class="action-btn" disabled>
-                            <span class="action-icon">&#8595;</span><span>Previous</span>
-                        </button>
-                        <button id="action-like" class="action-btn" disabled>
-                            <span class="action-icon">&#9829;</span><span>Like</span>
-                        </button>
-                        <button id="action-save" class="action-btn" disabled>
-                            <span class="action-icon">&#9734;</span><span>Save</span>
-                        </button>
-                        <button id="action-follow" class="action-btn" disabled>
-                            <span class="action-icon">&#43;</span><span>Follow</span>
-                        </button>
-                        <button id="action-comment" class="action-btn" disabled>
-                            <span class="action-icon">&#128172;</span><span>Comment</span>
-                        </button>
-                    </div>
-                    <div class="batch-actions" id="batch-actions" style="display: none;">
-                        <h4>Batch Actions (All Selected)</h4>
-                        <div class="batch-buttons">
-                            <button id="batch-swipe" class="btn-small">Swipe All</button>
-                            <button id="batch-like" class="btn-small">Like All</button>
-                        </div>
-                    </div>
-                </section>
+            <!-- AI Agent -->
+            <section class="agent-panel">
+                <h3>AI Agent</h3>
+                <p class="hint">Claude looks at the screen (vision + OCR) and drives the phone: swipes, likes, comments, follows.</p>
+                <textarea id="agent-goal" placeholder="Goal (leave blank for natural browsing)"></textarea>
+                <div class="agent-controls">
+                    <label>Steps: <input type="number" id="agent-steps" value="10" min="1" max="50"></label>
+                    <button id="agent-step" class="btn-small" disabled>Single Step</button>
+                    <button id="agent-run" class="btn" disabled>Run Agent</button>
+                </div>
+                <div id="agent-log" class="agent-log"><p class="placeholder">The agent's actions will appear here</p></div>
+            </section>
 
-                <!-- AI Agent -->
-                <section class="agent-panel">
-                    <h3>AI Agent</h3>
-                    <p class="hint">Claude looks at the screen (vision + OCR) and drives the phone: swipes, likes, comments, follows.</p>
-                    <textarea id="agent-goal" placeholder="Goal (leave blank for natural browsing)"></textarea>
-                    <div class="agent-controls">
-                        <label>Steps: <input type="number" id="agent-steps" value="10" min="1" max="50"></label>
-                        <button id="agent-step" class="btn-small" disabled>Single Step</button>
-                        <button id="agent-run" class="btn" disabled>Run Agent</button>
-                    </div>
-                    <div id="agent-log" class="agent-log">
-                        <p class="placeholder">The agent's actions will appear here</p>
-                    </div>
-                </section>
+            <!-- AI Comments -->
+            <section class="comment-panel">
+                <h3>AI Comments</h3>
+                <div class="comment-controls">
+                    <select id="comment-style">
+                        <option value="friendly">Friendly</option>
+                        <option value="funny">Funny</option>
+                        <option value="supportive">Supportive</option>
+                        <option value="curious">Curious</option>
+                        <option value="impressed">Impressed</option>
+                        <option value="relatable">Relatable</option>
+                    </select>
+                    <button id="generate-comments" class="btn" disabled>Generate Comments</button>
+                </div>
+                <div id="comment-suggestions" class="comment-suggestions"><p class="placeholder">Click "Generate Comments" to get AI suggestions</p></div>
+                <div class="custom-comment">
+                    <textarea id="custom-comment" placeholder="Or type your own comment..."></textarea>
+                    <button id="post-comment" class="btn" disabled>Post Comment</button>
+                </div>
+            </section>
 
-                <!-- AI Comments -->
-                <section class="comment-panel">
-                    <h3>AI Comments</h3>
-                    <div class="comment-controls">
-                        <select id="comment-style">
-                            <option value="friendly">Friendly</option>
-                            <option value="funny">Funny</option>
-                            <option value="supportive">Supportive</option>
-                            <option value="curious">Curious</option>
-                            <option value="impressed">Impressed</option>
-                            <option value="relatable">Relatable</option>
-                        </select>
-                        <button id="generate-comments" class="btn" disabled>Generate Comments</button>
-                    </div>
-                    <div id="comment-suggestions" class="comment-suggestions">
-                        <p class="placeholder">Click "Generate Comments" to get AI suggestions</p>
-                    </div>
-                    <div class="custom-comment">
-                        <textarea id="custom-comment" placeholder="Or type your own comment..."></textarea>
-                        <button id="post-comment" class="btn" disabled>Post Comment</button>
-                    </div>
-                </section>
+            <!-- Video Analysis -->
+            <section class="analysis-panel">
+                <h3>Video Analysis</h3>
+                <button id="analyze-video" class="btn" disabled>Analyze Current Video</button>
+                <div id="analysis-result" class="analysis-result"><p class="placeholder">Analysis results will appear here</p></div>
+            </section>
 
-                <!-- Video Analysis -->
-                <section class="analysis-panel">
-                    <h3>Video Analysis</h3>
-                    <button id="analyze-video" class="btn" disabled>Analyze Current Video</button>
-                    <div id="analysis-result" class="analysis-result">
-                        <p class="placeholder">Analysis results will appear here</p>
-                    </div>
-                </section>
+            <!-- Interface Explorer -->
+            <section class="explorer-panel">
+                <h3>Interface Explorer</h3>
+                <p class="hint">Open a TikTok screen on the phone → <b>Analyze</b>. Claude marks the buttons it sees. Verify each: pick a control, then <b>click the image</b> to move its dot onto the exact spot. Set the screen type and <b>Save to map</b>.</p>
+                <div class="explorer-controls">
+                    <button id="explore-analyze" class="btn" disabled>Analyze current screen</button>
+                    <label>Screen type: <input type="text" id="explore-screen-type" placeholder="for_you_feed" list="screen-types"></label>
+                    <datalist id="screen-types">
+                        <option value="for_you_feed"><option value="slideshow_feed"><option value="following_feed">
+                        <option value="profile"><option value="search_input"><option value="search_results">
+                        <option value="explore"><option value="comments_sheet"><option value="share_sheet">
+                        <option value="inbox_dm"><option value="live"><option value="settings">
+                    </datalist>
+                    <button id="explore-save" class="btn-small" disabled>Save to map</button>
+                </div>
+                <div class="explorer-body">
+                    <div id="explore-canvas" class="explore-canvas"><p class="placeholder">Analyze a screen to begin</p></div>
+                    <div id="explore-list" class="explore-list"></div>
+                </div>
+                <div class="explore-saved-head"><button id="explore-copy-map" class="btn-small">Copy UI map</button></div>
+                <details class="explore-saved"><summary>Saved UI map</summary><pre id="explore-map">{}</pre></details>
+            </section>
 
-                <!-- Interface Explorer -->
-                <section class="explorer-panel">
-                    <h3>Interface Explorer</h3>
-                    <p class="hint">Open a TikTok screen on the phone → <b>Analyze</b>. Claude marks the buttons it sees. Verify each: pick a control, then <b>click the image</b> to move its dot onto the exact spot. Set the screen type and <b>Save to map</b>.</p>
-                    <div class="explorer-controls">
-                        <button id="explore-analyze" class="btn" disabled>Analyze current screen</button>
-                        <label>Screen type:
-                            <input type="text" id="explore-screen-type" placeholder="for_you_feed" list="screen-types">
-                        </label>
-                        <datalist id="screen-types">
-                            <option value="for_you_feed"><option value="slideshow_feed"><option value="following_feed">
-                            <option value="profile"><option value="search_input"><option value="search_results">
-                            <option value="explore"><option value="comments_sheet"><option value="share_sheet">
-                            <option value="inbox_dm"><option value="live"><option value="settings">
-                        </datalist>
-                        <button id="explore-save" class="btn-small" disabled>Save to map</button>
-                    </div>
-                    <div class="explorer-body">
-                        <div id="explore-canvas" class="explore-canvas">
-                            <p class="placeholder">Analyze a screen to begin</p>
-                        </div>
-                        <div id="explore-list" class="explore-list"></div>
-                    </div>
-                    <div class="explore-saved-head">
-                        <button id="explore-copy-map" class="btn-small">Copy UI map</button>
-                    </div>
-                    <details class="explore-saved">
-                        <summary>Saved UI map</summary>
-                        <pre id="explore-map">{}</pre>
-                    </details>
-                </section>
+            <!-- Mirror Re-cast Calibration -->
+            <section class="mirror-panel">
+                <h3>Mirror Re-cast Calibration</h3>
+                <p class="hint">Teach the agent to restore a dropped screen mirror. Do this <b>once</b>, while mirroring works. Steps: <b>1</b> Open Control Center → <b>2</b> click the <i>Screen Mirroring</i> button on the image → <b>3</b> Open receiver list → <b>4</b> click your <i>PC</i> in the list → <b>5</b> Save.</p>
+                <div class="mirror-controls">
+                    <button id="mirror-open-cc" class="btn-small">1. Open Control Center</button>
+                    <button id="mirror-pick-btn" class="btn-small" disabled>2. Mark: Screen Mirroring</button>
+                    <button id="mirror-open-list" class="btn-small" disabled>3. Open receiver list</button>
+                    <button id="mirror-pick-recv" class="btn-small" disabled>4. Mark: PC receiver</button>
+                    <button id="mirror-save" class="btn-small" disabled>5. Save</button>
+                    <button id="mirror-close" class="btn-small">Close CC</button>
+                </div>
+                <p class="hint" id="mirror-hintline">Screen Mirroring: <span id="mirror-btn-pt">—</span> · PC receiver: <span id="mirror-recv-pt">—</span></p>
+                <div id="mirror-canvas" class="explore-canvas"><p class="placeholder">Open Control Center to begin</p></div>
+            </section>
 
-                <!-- Mirror Re-cast Calibration -->
-                <section class="mirror-panel">
-                    <h3>Mirror Re-cast Calibration</h3>
-                    <p class="hint">Teach the agent to restore a dropped screen mirror. Do this <b>once</b>, while mirroring works. Steps: <b>1</b> Open Control Center → <b>2</b> click the <i>Screen Mirroring</i> button on the image → <b>3</b> Open receiver list → <b>4</b> click your <i>PC</i> in the list → <b>5</b> Save.</p>
-                    <div class="mirror-controls">
-                        <button id="mirror-open-cc" class="btn-small">1. Open Control Center</button>
-                        <button id="mirror-pick-btn" class="btn-small" disabled>2. Mark: Screen Mirroring</button>
-                        <button id="mirror-open-list" class="btn-small" disabled>3. Open receiver list</button>
-                        <button id="mirror-pick-recv" class="btn-small" disabled>4. Mark: PC receiver</button>
-                        <button id="mirror-save" class="btn-small" disabled>5. Save</button>
-                        <button id="mirror-close" class="btn-small">Close CC</button>
-                    </div>
-                    <p class="hint" id="mirror-hintline">Screen Mirroring: <span id="mirror-btn-pt">—</span> · PC receiver: <span id="mirror-recv-pt">—</span></p>
-                    <div id="mirror-canvas" class="explore-canvas">
-                        <p class="placeholder">Open Control Center to begin</p>
-                    </div>
-                </section>
-
-                <!-- Manual Keyboard -->
-                <section class="keyboard-panel">
-                    <h3>Manual Keyboard</h3>
-                    <p class="hint">Type on the phone from your PC while the board stays connected. Tap the field on the phone first, then type here.</p>
-                    <div class="keyboard-controls">
-                        <input type="text" id="manual-text" placeholder="Type text to send to the phone…">
-                        <button id="manual-send" class="btn" disabled>Send</button>
-                    </div>
-                    <div class="keyboard-keys">
-                        <button class="btn-small manual-key" data-fn="ENTER" disabled>Enter</button>
-                        <button class="btn-small manual-key" data-fn="BACKSPACE" disabled>Backspace</button>
-                        <button class="btn-small manual-key" data-fn="WIN+h" disabled>Home</button>
-                        <button class="btn-small manual-key" data-fn="TAB+b" disabled>Back</button>
-                    </div>
-                </section>
-
-            </div><!-- /advanced-panels -->
+            <!-- Manual Keyboard -->
+            <section class="keyboard-panel">
+                <h3>Manual Keyboard</h3>
+                <p class="hint">Type on the phone from your PC while the board stays connected. Tap the field on the phone first, then type here.</p>
+                <div class="keyboard-controls">
+                    <input type="text" id="manual-text" placeholder="Type text to send to the phone…">
+                    <button id="manual-send" class="btn" disabled>Send</button>
+                </div>
+                <div class="keyboard-keys">
+                    <button class="btn-small manual-key" data-fn="ENTER" disabled>Enter</button>
+                    <button class="btn-small manual-key" data-fn="BACKSPACE" disabled>Backspace</button>
+                    <button class="btn-small manual-key" data-fn="WIN+h" disabled>Home</button>
+                    <button class="btn-small manual-key" data-fn="TAB+b" disabled>Back</button>
+                </div>
+            </section>
         </main>
 
         <!-- Settings Modal -->
@@ -247,7 +223,7 @@
                     </div>
                     <div class="setting-group">
                         <h4>UI Calibration</h4>
-                        <p class="hint">Click on the preview to calibrate icon positions. Text buttons (Follow, Save, Post) are located automatically.</p>
+                        <p class="hint">Click on the preview to calibrate icon positions.</p>
                         <select id="calibration-element">
                             <option value="">Select element to calibrate...</option>
                             <option value="like_button">Like Button</option>
@@ -264,7 +240,6 @@
             </div>
         </div>
 
-        <!-- Toast Notifications -->
         <div id="toast-container"></div>
     </div>
 
