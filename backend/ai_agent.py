@@ -144,9 +144,7 @@ class TikTokAgent:
             "error_streak": 0,         # consecutive perceive errors (device offline etc.)
             "videos_since_comment": 999,  # relevant videos since the last comment
             "comment_gap": 0,          # randomized cooldown target (set on first use)
-            "engaged_sigs": set(),     # signatures of videos already engaged (no re-liking)
-            "last_sig": None,          # signature of the previous cycle's video
-            "same_streak": 0,          # consecutive cycles on the SAME video (stuck)
+            "engaged_posts": [],       # word-sets of posts already engaged (no re-liking)
         }
 
     # --------------------------------------------------------- perceive ------
@@ -192,13 +190,15 @@ class TikTokAgent:
         for _ in range(max(0, tries - 1)):
             if perc.get("error"):
                 return perc
-            sig1 = self._video_sig(perc)
+            words1 = self._post_words(perc)
             await asyncio.sleep(0.7)
             nxt = await self.perceive(device_id)
             if nxt.get("error"):
                 return nxt
-            if self._video_sig(nxt) == sig1:
-                return nxt  # frame has settled
+            words2 = self._post_words(nxt)
+            # Settled when the two captures describe the same thing (or both empty).
+            if (words1 == words2) or self._same_post(words1, words2):
+                return nxt
             perc = nxt
         return perc
 
@@ -967,18 +967,41 @@ class TikTokAgent:
         return actions
 
     @staticmethod
-    def _video_sig(perception: dict) -> Optional[str]:
-        """A stable-ish fingerprint of the current video from its OCR text
-        (caption/username words), used to tell one video from another so we
-        don't re-engage the same post or get stuck re-liking it."""
-        words = []
+    def _post_words(perception: dict) -> set:
+        """Set of meaningful caption/username words for the current post.
+
+        Used to tell one post from another. A word SET compared fuzzily is far
+        more robust to OCR jitter than an exact string -- the same video that
+        reads slightly differently frame to frame still overlaps heavily."""
+        words = set()
         for e in perception.get("elements", []):
-            t = (e.get("text") or "").strip().lower()
-            # Keep meaningful words (captions, @names); drop counts and tiny bits.
-            if len(t) >= 4 and not t.replace(".", "").replace(",", "").isdigit():
-                words.append(t)
-        words = sorted(set(words))
-        return " ".join(words[:8]) if words else None
+            for raw in (e.get("text") or "").lower().split():
+                w = "".join(ch for ch in raw if ch.isalnum())
+                if len(w) >= 4 and not w.isdigit():
+                    words.add(w)
+        return words
+
+    @staticmethod
+    def _same_post(a: set, b: set) -> bool:
+        """True if two word sets describe the same post (fuzzy: shared caption
+        words), tolerating OCR noise between captures."""
+        if not a or not b:
+            return False
+        inter = len(a & b)
+        return inter >= 3 and inter / len(a | b) >= 0.45
+
+    async def _advance_feed(self, device_id: str, current_words: set) -> None:
+        """Swipe to the next post and CONFIRM we actually moved. The feed/mirror
+        sometimes ignores a swipe, which left the campaign re-processing the same
+        video; retry until the caption changes (or we give up)."""
+        for _ in range(3):
+            await self.controller.swipe_next(device_id)
+            await self._sleep(self._rand(0.8, 1.4))
+            perc = await self.perceive(device_id)
+            if perc.get("error"):
+                return  # let the next cycle handle the error/recover
+            if not self._same_post(self._post_words(perc), current_words):
+                return  # advanced to a different post
 
     def _comment_allowed(self) -> bool:
         """Sparse, non-spammy commenting: only once the randomized cooldown has
@@ -1106,36 +1129,29 @@ class TikTokAgent:
         st["off_feed_streak"] = 0
         st["stats"]["videos"] += 1
 
-        if not plan["relevant"]:
-            watch = self._watch_irrelevant()
+        # Identify the post (caption words) and check if we've already handled it
+        # this session -- if so, never engage it again (that caused the re-liking
+        # and unliking), just move on.
+        words = self._post_words(perception)
+        already = any(self._same_post(words, seen) for seen in st["engaged_posts"])
+
+        if not plan["relevant"] or already:
+            watch = self._watch_irrelevant() if not plan["relevant"] else self._rand(0.8, 2.0)
             await self._sleep(watch)
-            await self.controller.swipe_next(device_id)
+            await self._advance_feed(device_id, words)
+            reason = "already engaged" if already else "irrelevant"
             return {"on_feed": True, "screen": plan["screen"], "post_type": plan.get("post_type", ""),
-                    "relevant": False, "reason": plan["reason"], "actions": [], "watch": round(watch, 1)}
+                    "relevant": bool(plan["relevant"]), "reason": plan["reason"],
+                    "actions": ([f"skip ({reason})"] if already else []), "watch": round(watch, 1)}
 
-        # Relevant. First: are we still on a video we already handled, or did the
-        # last swipe fail to advance? If so, DON'T re-engage (that caused the
-        # like/unlike toggling and the stuck loop) -- just move on, harder if
-        # we're clearly stuck.
-        sig = self._video_sig(perception)
-        st["same_streak"] = st["same_streak"] + 1 if (sig and sig == st["last_sig"]) else 0
-        st["last_sig"] = sig
-        already_engaged = bool(sig) and sig in st["engaged_sigs"]
-        if already_engaged or st["same_streak"] >= 1:
-            await self._sleep(self._rand(0.8, 2.0))
-            await self.controller.swipe_next(device_id)
-            if st["same_streak"] >= 2:   # really stuck -- a second swipe to break out
-                await self._sleep(self._rand(0.5, 1.0))
-                await self.controller.swipe_next(device_id)
-            reason = "already engaged" if already_engaged else "same video, advancing"
-            return {"on_feed": True, "screen": plan["screen"], "relevant": True,
-                    "reason": plan["reason"], "actions": [f"skip ({reason})"], "watch": 0}
-
-        # New relevant video: watch part of the time, engage, linger, then move on.
+        # New relevant video: mark it engaged NOW (before acting) so we never
+        # double-handle it, then decide reactions ONCE, do them, and always
+        # advance to the next post at the end.
         st["stats"]["relevant"] += 1
         st["videos_since_comment"] += 1
-        if sig:
-            st["engaged_sigs"].add(sig)
+        if words:
+            st["engaged_posts"].append(words)
+            st["engaged_posts"] = st["engaged_posts"][-150:]
         watch = self._watch_relevant()
         await self._sleep(watch * self._rand(0.3, 0.6))
 
@@ -1189,8 +1205,10 @@ class TikTokAgent:
                     st["comment_gap"] = random.randint(*c["comment_min_gap"])
             await self._sleep(self._rand(*c["between_actions"]))
 
+        # Linger a touch, then ALWAYS advance to the next post -- verified, so a
+        # swipe the feed ignores can't leave us re-processing this same video.
         await self._sleep(self._watch_relevant_remainder(watch))
-        await self.controller.swipe_next(device_id)
+        await self._advance_feed(device_id, words)
         return {
             "on_feed": True,
             "screen": plan["screen"],
