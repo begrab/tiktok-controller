@@ -52,10 +52,10 @@ class Config:
     # English; lower this for accented or stylised Latin text.
     ocr_similarity: float = 0.8
 
-    # The phone's on-screen keyboard is German QWERTZ, so keystrokes sent via
-    # /key/sendkey come out with z<->y swapped. Only affects the TYPED fallback
-    # (clipboard paste is unaffected). Set KEYBOARD_SWAP_ZY=0 for a QWERTY phone.
-    keyboard_swap_zy: bool = os.getenv("KEYBOARD_SWAP_ZY", "1") != "0"
+    # Off by default: the phone does NOT swap z/y (that was a laptop typo when
+    # relaying). Only enable (KEYBOARD_SWAP_ZY=1) if a specific phone's typed
+    # output actually comes out with z<->y swapped. Clipboard paste is unaffected.
+    keyboard_swap_zy: bool = os.getenv("KEYBOARD_SWAP_ZY", "0") == "1"
 
     # Approximate TikTok UI anchors as FRACTIONS of the imgw x imgh coordinate
     # space. Icons have no text label, so find-text can't locate them -- these
