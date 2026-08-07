@@ -145,6 +145,7 @@ class TikTokAgent:
             "videos_since_comment": 999,  # relevant videos since the last comment
             "comment_gap": 0,          # randomized cooldown target (set on first use)
             "engaged_posts": [],       # word-sets of posts already engaged (no re-liking)
+            "next_perc": None,         # settled frame from the last advance (reused, saves a capture)
         }
 
     # --------------------------------------------------------- perceive ------
@@ -191,7 +192,7 @@ class TikTokAgent:
             if perc.get("error"):
                 return perc
             words1 = self._post_words(perc)
-            await asyncio.sleep(0.7)
+            await asyncio.sleep(0.45)
             nxt = await self.perceive(device_id)
             if nxt.get("error"):
                 return nxt
@@ -382,6 +383,10 @@ class TikTokAgent:
                             "type": "string",
                             "description": "A few words on the relevance decision.",
                         },
+                        "language": {
+                            "type": "string",
+                            "description": "The primary language of the video's speech, caption, and on-screen text, as an English name (e.g. 'German', 'English', 'Polish', 'Spanish'). Your best guess from what you can read/see.",
+                        },
                         "comment": {
                             "type": "string",
                             "description": "If on_feed and relevant, a fresh, human, personal-experience comment tailored to THIS video that subtly promotes the product. Leave empty otherwise.",
@@ -423,6 +428,7 @@ class TikTokAgent:
             "visible acne or skin marks -- someone with acne talking about moving, "
             "cooking, or lifestyle is NOT relevant.",
             "Be reasonably strict -- when in doubt, mark it not relevant so we skip it.",
+            "\nAlways report the video's primary 'language' (English name).",
             "\nIf relevant, also write a comment. " + NICHE["comment_style"],
             f"Always spell the product name exactly as '{NICHE['name']}' -- never "
             "misspell it.",
@@ -486,9 +492,31 @@ class TikTokAgent:
                     "post_type": data.get("post_type") or "",
                     "relevant": bool(data.get("relevant")),
                     "reason": data.get("reason", ""),
+                    "language": (data.get("language") or "").strip(),
                     "comment": (data.get("comment") or "").strip(),
                 }
-        return {"on_feed": False, "screen": "unknown", "post_type": "", "relevant": False, "reason": "no plan returned", "comment": ""}
+        return {"on_feed": False, "screen": "unknown", "post_type": "", "relevant": False,
+                "reason": "no plan returned", "language": "", "comment": ""}
+
+    @staticmethod
+    def _language_matches(detected: str, target: str) -> bool:
+        """Whether the detected content language matches the campaign target.
+        Empty target = allow any; empty detection = don't over-filter."""
+        if not target:
+            return True
+        d, t = detected.lower().strip(), target.lower().strip()
+        if not d:
+            return True
+        alias = [
+            {"german", "deutsch", "de"}, {"english", "en"}, {"polish", "polnisch", "pl"},
+            {"spanish", "espanol", "español", "es"}, {"french", "francais", "français", "fr"},
+            {"italian", "italiano", "it"}, {"portuguese", "portugues", "pt"},
+            {"dutch", "nederlands", "nl"}, {"turkish", "türkisch", "tr"},
+        ]
+        for group in alias:
+            if t in group and d in group:
+                return True
+        return d == t or d.startswith(t) or t.startswith(d)
 
     # ------------------------------------------------ UI exploration ---------
     # Interactive mapping: Claude looks at the current screen and reports the
@@ -1025,9 +1053,14 @@ class TikTokAgent:
             await asyncio.sleep(self.config.post_swipe_settle)
             perc = await self.settled_perception(device_id, tries=2)
             if perc.get("error"):
+                self._campaign["next_perc"] = None
                 return
             if not (current_words and self._same_post(self._post_words(perc), current_words)):
-                return  # advanced (the clean caption changed)
+                # Advanced. Hand this already-settled frame to the next cycle so
+                # it doesn't re-capture -- a big per-video latency saving.
+                self._campaign["next_perc"] = perc
+                return
+        self._campaign["next_perc"] = None
 
     def _comment_allowed(self) -> bool:
         """Sparse, non-spammy commenting: only once the randomized cooldown has
@@ -1089,9 +1122,13 @@ class TikTokAgent:
         st = self._campaign
         c = self.config.campaign
 
-        # Wait for a settled frame -- the mirror lags the phone, so a stale
-        # transitional capture must not drive the decision.
-        perception = await self.settled_perception(device_id)
+        # Reuse the settled frame the last advance already captured, if any --
+        # otherwise wait for a fresh settled frame (the mirror lags the phone, so
+        # a stale transitional capture must not drive the decision).
+        perception = st.get("next_perc")
+        st["next_perc"] = None
+        if perception is None:
+            perception = await self.settled_perception(device_id)
         st["last_screenshot"] = perception.get("screenshot_b64")  # live view for UI
         if perception.get("error"):
             st["stats"]["errors"] += 1
@@ -1161,14 +1198,23 @@ class TikTokAgent:
         words = self._post_words(perception)
         already = any(self._same_post(words, seen) for seen in st["engaged_posts"])
 
-        if not plan["relevant"] or already:
-            watch = self._watch_irrelevant() if not plan["relevant"] else self._rand(0.8, 2.0)
+        # Language gate: only engage content in the configured language.
+        target_lang = NICHE.get("language")
+        off_language = bool(target_lang) and not self._language_matches(
+            plan.get("language", ""), target_lang
+        )
+
+        if not plan["relevant"] or already or off_language:
+            fast = (not plan["relevant"]) or off_language
+            watch = self._watch_irrelevant() if fast else self._rand(0.8, 2.0)
             await self._sleep(watch)
             await self._advance_feed(device_id, words)
-            reason = "already engaged" if already else "irrelevant"
+            reason = ("off-language: " + (plan.get("language") or "?")) if off_language else (
+                "already engaged" if already else "irrelevant")
+            actions = [f"skip ({reason})"] if (already or off_language) else []
             return {"on_feed": True, "screen": plan["screen"], "post_type": plan.get("post_type", ""),
                     "relevant": bool(plan["relevant"]), "reason": plan["reason"],
-                    "actions": ([f"skip ({reason})"] if already else []), "watch": round(watch, 1)}
+                    "actions": actions, "watch": round(watch, 1)}
 
         # New relevant video: mark it engaged NOW (before acting) so we never
         # double-handle it, then decide reactions ONCE, do them, and always

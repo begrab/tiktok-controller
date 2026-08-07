@@ -70,8 +70,8 @@ class Config:
     )
 
     # Timing (seconds).
-    action_delay: float = 0.5      # settle time between chained taps
-    paste_delay: float = 0.3       # focus -> paste settle time
+    action_delay: float = 0.3      # settle time between chained taps
+    paste_delay: float = 0.25      # focus -> paste settle time
     swipe_length: float = 0.8      # fraction of screen per swipe -- a firm flick;
                                    # too short and TikTok snaps back to the same video
 
@@ -82,7 +82,7 @@ class Config:
     # let the pointer come to rest before we tap. The real fix is phone/console
     # settings (tracking speed at max, no auto-hide) -- these just stop us from
     # racing the pointer between our own commands.
-    pre_tap_settle: float = 0.18   # pause before every tap so the pointer is at rest
+    pre_tap_settle: float = 0.1    # pause before every tap so the pointer is at rest
     post_swipe_settle: float = 0.6   # rest after a swipe: pointer settles AND the
                                      # laggy mirror catches up to the new video
 

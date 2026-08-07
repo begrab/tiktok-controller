@@ -8,6 +8,13 @@ change. Keep the shape of the dict; just refine the text and lists.
 NICHE = {
     "name": "NutriSkin",
 
+    # ------------------------------------------------------------- LANGUAGE --
+    # Only engage videos in THIS language (English name, e.g. "German",
+    # "English", "Spanish"). Off-language videos are skipped like irrelevant
+    # ones, and comments are written in this language. Set to "" or None to
+    # allow any language.
+    "language": "German",
+
     # ------------------------------------------------------------------ WHAT --
     # One or two sentences describing the product and who it's for. This is
     # given to the model verbatim, so write it the way you'd explain it to a
