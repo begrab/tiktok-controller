@@ -402,20 +402,26 @@ class TikTokController:
         z<->y and mangles non-ASCII. Only if the clipboard bridge is unavailable
         do we type a transliterated ASCII version so the comment still posts.
         """
-        try:
-            await self.api.clipboard_set(device_id, text)
-            await asyncio.sleep(self.config.paste_delay)
-            await self.api.send_key(device_id, fn_key="WIN+v")
-            return ActionResult.ok("Text entered (paste)")
-        except IMouseError as exc:
-            fallback = self._for_typing(text).strip()
-            if fallback:
-                try:
-                    await self.api.send_key(device_id, key=fallback)
-                    return ActionResult.ok("Text entered (typed fallback)")
-                except IMouseError:
-                    pass
-            return ActionResult.fail(f"clipboard paste failed and no typed fallback: {exc}")
+        exc: Optional[Exception] = None
+        if self.config.use_clipboard_paste:
+            try:
+                # Short timeout so a missing clipboard bridge fails fast instead
+                # of hanging ~30s per comment.
+                await asyncio.wait_for(self.api.clipboard_set(device_id, text), timeout=6.0)
+                await asyncio.sleep(self.config.paste_delay)
+                await self.api.send_key(device_id, fn_key="WIN+v")
+                return ActionResult.ok("Text entered (paste)")
+            except (IMouseError, asyncio.TimeoutError) as e:
+                exc = e  # bridge unavailable -- type instead
+
+        fallback = self._for_typing(text).strip()
+        if fallback:
+            try:
+                await self.api.send_key(device_id, key=fallback)
+                return ActionResult.ok("Text entered (typed)")
+            except IMouseError as e:
+                exc = e
+        return ActionResult.fail(f"could not enter text: {exc}")
 
     async def comment_on_video(
         self,

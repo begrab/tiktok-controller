@@ -57,6 +57,11 @@ class Config:
     # output actually comes out with z<->y swapped. Clipboard paste is unaffected.
     keyboard_swap_zy: bool = os.getenv("KEYBOARD_SWAP_ZY", "0") == "1"
 
+    # Clipboard paste needs the iOS clipboard Shortcut bridge. If it isn't set up
+    # (/shortcut/clipboard/set times out), set USE_CLIPBOARD_PASTE=0 so text
+    # entry skips it and types directly (transliterated) -- no 30s hang.
+    use_clipboard_paste: bool = os.getenv("USE_CLIPBOARD_PASTE", "1") == "1"
+
     # Approximate TikTok UI anchors as FRACTIONS of the imgw x imgh coordinate
     # space. Icons have no text label, so find-text can't locate them -- these
     # are the fallback and can be calibrated per device from the UI. Anything
