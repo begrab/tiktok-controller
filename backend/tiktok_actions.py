@@ -383,6 +383,16 @@ class TikTokController:
         out = "".join(cls._TRANSLIT.get(c, c) for c in text)
         return "".join(c for c in out if ord(c) < 128)
 
+    _ZY_SWAP = str.maketrans({"z": "y", "y": "z", "Z": "Y", "Y": "Z"})
+
+    def _for_typing(self, text: str) -> str:
+        """Prepare text for /key/sendkey: transliterate to ASCII, then undo the
+        QWERTZ z<->y swap so a German phone renders it correctly."""
+        ascii_text = self._to_ascii(text)
+        if self.config.keyboard_swap_zy:
+            ascii_text = ascii_text.translate(self._ZY_SWAP)
+        return ascii_text
+
     async def enter_text(self, device_id: str, text: str) -> ActionResult:
         """Enter ``text`` into the focused field.
 
@@ -398,7 +408,7 @@ class TikTokController:
             await self.api.send_key(device_id, fn_key="WIN+v")
             return ActionResult.ok("Text entered (paste)")
         except IMouseError as exc:
-            fallback = self._to_ascii(text).strip()
+            fallback = self._for_typing(text).strip()
             if fallback:
                 try:
                     await self.api.send_key(device_id, key=fallback)
