@@ -966,18 +966,28 @@ class TikTokAgent:
         random.shuffle(actions)  # vary the order too
         return actions
 
-    @staticmethod
-    def _post_words(perception: dict) -> set:
-        """Set of meaningful caption/username words for the current post.
+    # TikTok UI chrome that appears on EVERY feed frame -- must be excluded from
+    # the post fingerprint or it dominates and makes different videos look alike
+    # (and the clock/nav jitter makes the same video look different).
+    UI_STOP = {
+        "community", "entdecken", "furdich", "dich", "gefolgt", "folgen", "folgeich",
+        "home", "posteingang", "profil", "shop", "freunde", "jetzt", "live",
+        "suchen", "following", "foryou", "friends", "inbox", "profile", "discover",
+        "simfehlt", "gefolgtshop", "shopfurdich", "communitygefolgt", "mehr",
+    }
 
-        Used to tell one post from another. A word SET compared fuzzily is far
-        more robust to OCR jitter than an exact string -- the same video that
-        reads slightly differently frame to frame still overlaps heavily."""
+    @classmethod
+    def _post_words(cls, perception: dict) -> set:
+        """Caption/username words identifying the current POST -- with the TikTok
+        nav bar, status bar, and clock stripped out. Compared fuzzily, this
+        reliably tells one video from another despite OCR jitter."""
         words = set()
         for e in perception.get("elements", []):
             for raw in (e.get("text") or "").lower().split():
+                if any(ch.isdigit() for ch in raw):
+                    continue  # drop clock (943am), counts, times
                 w = "".join(ch for ch in raw if ch.isalnum())
-                if len(w) >= 4 and not w.isdigit():
+                if len(w) >= 4 and w not in cls.UI_STOP:
                     words.add(w)
         return words
 
@@ -998,13 +1008,26 @@ class TikTokAgent:
         wait for a SETTLED frame (mirror caught up), and only if it's still the
         same post do we try once more. The cross-cycle dedup catches anything
         that still slips through, without ever re-reacting."""
-        await self.controller.swipe_next(device_id)
-        perc = await self.settled_perception(device_id, tries=2)
-        if perc.get("error"):
-            return
-        if current_words and self._same_post(self._post_words(perc), current_words):
-            # The swipe didn't take. One more, fully settled between (no glitch).
-            await self.controller.swipe_next(device_id)
+        api = self.controller.api
+        # Try gestures in order, VERIFYING each against the clean caption (no UI
+        # chrome), settling fully between attempts so none land mid-transition.
+        # Whatever actually moves the feed wins; we stop as soon as it changes.
+        attempts = [
+            lambda: api.swipe(device_id, "up", 0.75),
+            lambda: api.swipe(device_id, "up", 0.9),
+            lambda: api.wheel(device_id, "down", 0.6, 5),
+        ]
+        for act in attempts:
+            try:
+                await act()
+            except IMouseError:
+                continue
+            await asyncio.sleep(self.config.post_swipe_settle)
+            perc = await self.settled_perception(device_id, tries=2)
+            if perc.get("error"):
+                return
+            if not (current_words and self._same_post(self._post_words(perc), current_words)):
+                return  # advanced (the clean caption changed)
 
     def _comment_allowed(self) -> bool:
         """Sparse, non-spammy commenting: only once the randomized cooldown has

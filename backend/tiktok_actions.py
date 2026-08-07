@@ -93,7 +93,9 @@ class TikTokController:
             if receiver:
                 await self.api.click(device_id, int(receiver[0]), int(receiver[1]))
                 await asyncio.sleep(3.5)  # AirPlay needs a moment to re-establish
-            await self.api.send_key(device_id, fn_key="WIN+h")  # Home closes CC
+            # Close Control Center with a swipe-down -- NOT the Home button, which
+            # would drop the phone to the iOS home screen and exit TikTok.
+            await self.api.swipe(device_id, "down", 0.5)
             await asyncio.sleep(1.5)
         except IMouseError:
             return False

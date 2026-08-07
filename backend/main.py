@@ -393,9 +393,8 @@ async def swipe_test():
         raise HTTPException(status_code=404, detail="No online device")
     did = online[0].device_id
 
-    async def caption() -> str:
-        perc = await agent.perceive(did)
-        return " ".join(sorted(agent._post_words(perc)))[:140]
+    async def words() -> set:
+        return agent._post_words(await agent.perceive(did))
 
     async def do_swipe(direction, length):
         await client.swipe(did, direction, length)
@@ -411,8 +410,7 @@ async def swipe_test():
         ("wheel down x5", lambda: do_wheel("down", 5)),
         ("wheel up x5", lambda: do_wheel("up", 5)),
     ]
-    before = await caption()
-    prev = before
+    prev = await words()
     steps = []
     for name, fn in methods:
         try:
@@ -421,11 +419,15 @@ async def swipe_test():
             steps.append({"method": name, "error": str(exc)})
             continue
         await asyncio.sleep(1.8)  # let the mirror settle
-        after = await caption()
-        steps.append({"method": name, "changed": after != prev, "caption_after": after})
+        after = await words()
+        # Moved = the cleaned caption is NOT the same post (fuzzy), so UI/clock
+        # jitter doesn't count as movement.
+        moved = not agent._same_post(after, prev) if (after and prev) else (after != prev)
+        steps.append({"method": name, "moved": moved,
+                      "caption_after": " ".join(sorted(after))[:120]})
         prev = after
-    return {"caption_before": before, "steps": steps,
-            "hint": "Whichever step(s) show changed:true is a gesture that moves the feed."}
+    return {"steps": steps,
+            "hint": "moved:True means that gesture actually advanced the feed."}
 
 
 @app.get("/api/debug/rail")
@@ -508,7 +510,7 @@ async def mirror_calibrate():
         except IMouseError:
             shot_recv = None
 
-    await client.send_key(did, fn_key="WIN+h")  # Home closes Control Center
+    await client.swipe(did, "down", 0.5)  # close CC WITHOUT exiting the app
     await asyncio.sleep(1.0)
 
     elements = {}
@@ -554,11 +556,11 @@ async def mirror_open_cc():
 
 @app.post("/api/mirror/close-cc")
 async def mirror_close_cc():
-    """Close Control Center (Home)."""
+    """Close Control Center with a swipe-down (NOT Home, which exits the app)."""
     online = registry.online_devices
     if not online:
         raise HTTPException(status_code=404, detail="No online device")
-    await client.send_key(online[0].device_id, fn_key="WIN+h")
+    await client.swipe(online[0].device_id, "down", 0.5)
     return {"ok": True}
 
 
