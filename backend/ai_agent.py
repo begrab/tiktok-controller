@@ -372,8 +372,8 @@ class TikTokAgent:
                         },
                         "post_type": {
                             "type": "string",
-                            "enum": ["video", "photo_slideshow", "none"],
-                            "description": "When on_feed: 'photo_slideshow' if the post is a photo carousel (multiple images with small slide-indicator dots near the bottom-centre, sometimes a slide counter like 1/5), otherwise 'video'. 'none' when not on a feed post.",
+                            "enum": ["video", "photo_slideshow", "live", "none"],
+                            "description": "When on_feed: 'live' if this is a LIVE stream (a LIVE badge/'Jetzt LIVE', a viewer count, scrolling live chat, gift/coin icons -- someone broadcasting in real time); 'photo_slideshow' if it's a photo carousel (multiple images with small slide-indicator dots near the bottom-centre, sometimes a counter like 1/5); otherwise 'video'. 'none' when not on a feed post.",
                         },
                         "relevant": {
                             "type": "boolean",
@@ -428,6 +428,9 @@ class TikTokAgent:
             "visible acne or skin marks -- someone with acne talking about moving, "
             "cooking, or lifestyle is NOT relevant.",
             "Be reasonably strict -- when in doubt, mark it not relevant so we skip it.",
+            "\nIf the current post is a LIVE stream (LIVE badge, viewer count, "
+            "scrolling live chat, gift/coin icons), set post_type='live' -- we "
+            "always swipe past lives, never engage them.",
             "\nAlways report the video's primary 'language' (English name).",
             "\nIf relevant, also write a comment. " + NICHE["comment_style"],
             f"Always spell the product name exactly as '{NICHE['name']}' -- never "
@@ -497,6 +500,18 @@ class TikTokAgent:
                 }
         return {"on_feed": False, "screen": "unknown", "post_type": "", "relevant": False,
                 "reason": "no plan returned", "language": "", "comment": ""}
+
+    @staticmethod
+    def _looks_live(plan: dict) -> bool:
+        """A LIVE stream, from post_type or the screen description. Lives are
+        swiped past, never tapped -- tapping into one spirals recovery."""
+        if plan.get("post_type") == "live":
+            return True
+        text = ((plan.get("screen") or "") + " " + (plan.get("reason") or "")).lower()
+        return any(k in text for k in (
+            "livestream", "live stream", "jetzt live", "live chat", "going live",
+            "live session", "zuschauer", "viewers", "broadcast",
+        ))
 
     @staticmethod
     def _language_matches(detected: str, target: str) -> bool:
@@ -1170,21 +1185,42 @@ class TikTokAgent:
             return {"on_feed": None, "screen": "plan failed", "relevant": None,
                     "reason": f"plan failed: {exc}", "actions": [], "watch": 0}
 
+        # A LIVE stream (whether it reads as an in-feed card or a chat screen) is
+        # escaped by SWIPING PAST it, never by tapping -- tapping into a live is
+        # what spiralled recovery into the explore grid. Handle it before both
+        # the off-feed recovery and any engagement.
+        if self._looks_live(plan):
+            st["off_feed_streak"] = 0
+            await self._advance_feed(device_id, self._post_words(perception))
+            return {"on_feed": True, "screen": plan["screen"], "post_type": "live",
+                    "relevant": False, "reason": plan["reason"],
+                    "actions": ["skip (live -> swipe past)"], "watch": 0}
+
         # Off the feed (profile, sheet, search, …): recover, don't engage.
         if not plan["on_feed"]:
             st["stats"]["recovered"] += 1
             st["off_feed_streak"] += 1
             move = await self.recover(device_id, perception)
+            # Escalate: vision taps that keep failing (e.g. an explore grid where
+            # the "Für dich" it taps is just a filter) get overridden -- hardware
+            # Back, then a Home-tab tap, to break out instead of looping forever.
+            if st["off_feed_streak"] >= 4:
+                move = {"method": "hardware_back", "note": "escalated: back"}
             await self.apply_recovery(device_id, move)
-            await self._sleep(self._rand(1.5, 3.0))
+            if st["off_feed_streak"] >= 6:  # last resort: swipe up to leave a grid
+                try:
+                    await self.controller.api.swipe(device_id, "up", 0.8)
+                except IMouseError:
+                    pass
+            await self._sleep(self._rand(1.2, 2.5))
             entry = {
                 "on_feed": False, "screen": plan["screen"], "relevant": None,
                 "reason": plan["reason"],
                 "actions": [f"recover:{move.get('method', '?')} (try {st['off_feed_streak']})"],
                 "recovery": move.get("note", ""), "watch": 0,
             }
-            # Safety net: never spiral unsupervised. Stop after too many failures.
-            if st["off_feed_streak"] >= 12:
+            # Safety net: never spiral unsupervised. Stop sooner than before.
+            if st["off_feed_streak"] >= 8:
                 st["stop"] = True
                 entry["actions"].append("STOPPED (stuck off-feed)")
             return entry
